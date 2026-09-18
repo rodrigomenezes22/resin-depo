@@ -1,0 +1,23 @@
+# Every text file is LF in the working tree on every platform.
+#
+# Prettier already enforces endOfLine=lf on commit, but without this file Git
+# for Windows' installer default (core.autocrlf=true) checks the tree out CRLF,
+# and two things break: .husky/pre-commit runs `pnpm lint-staged\r` (sh keeps
+# the carriage return as part of the word), and `pnpm schema:docs:check`
+# compares prettier's LF output against a CRLF file and reports drift on every
+# run. `eol=lf` applies regardless of the developer's core.autocrlf setting.
+* text=auto eol=lf
+
+# Binaries: never normalised, never diffed as text.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.webp  binary
+*.pdf   binary
+*.gz    binary
+*.zip   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
