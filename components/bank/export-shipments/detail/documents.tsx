@@ -305,10 +305,8 @@ export function Documents({ group, onSaved }: { group: ShipmentGroupRow; onSaved
           group={group}
           docType={creating}
           onClose={() => setCreating(null)}
-          onSaved={() => {
-            setCreating(null);
-            refresh();
-          }}
+          // Saving keeps the editor open (the preview reloads); Close ends it.
+          onSaved={refresh}
         />
       ) : null}
 
@@ -318,10 +316,7 @@ export function Documents({ group, onSaved }: { group: ShipmentGroupRow; onSaved
           docType={editing.doc_type as ShipmentDocType}
           document={editing}
           onClose={() => setEditing(null)}
-          onSaved={() => {
-            setEditing(null);
-            refresh();
-          }}
+          onSaved={refresh}
         />
       ) : null}
     </Section>

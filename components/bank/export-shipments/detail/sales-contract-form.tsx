@@ -26,16 +26,9 @@ import type {
   ShipmentDocumentRow,
   ShipmentGroupRow,
 } from "@/components/bank/export-shipments/types";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
+import { DocumentEditorShell } from "@/components/bank/export-shipments/detail/document-editor-shell";
+import { isFieldEditable } from "@/lib/export-shipment/documents/editable";
 import { Textarea } from "@/components/ui/textarea";
 import { roundMoney, roundMt } from "@/lib/export-shipment/documents/totals";
 import {
@@ -315,6 +308,22 @@ export function SalesContractSheetForm({
       ),
   );
 
+  // The saved row this dialog is editing: null id until the first save; status
+  // flips to issued in place so the fields lock without reopening. Bumping the
+  // preview version reloads the PDF pane — only ever after a successful save.
+  const [live, setLive] = useState<{
+    id: string | null;
+    number: string | null;
+    status: "draft" | "issued" | "superseded" | "void";
+  }>({
+    id: document?.id ?? null,
+    number: document?.document_number ?? null,
+    status: (document?.status ?? "draft") as "draft" | "issued" | "superseded" | "void",
+  });
+  const [previewVersion, setPreviewVersion] = useState(0);
+  const isLocked = (key: string) =>
+    live.status === "draft" ? locked(key) : !isFieldEditable(key, "sales_contract", live.status);
+
   const create = ClientAPI.exportShipments.createDocument.useMutation();
   const update = ClientAPI.exportShipments.updateDocument.useMutation();
   const issue = ClientAPI.exportShipments.issueDocument.useMutation();
@@ -369,13 +378,13 @@ export function SalesContractSheetForm({
     }
 
     try {
-      let id = document?.id;
+      let id = live.id;
       if (id) {
         await update.mutateAsync({
           id,
           payload: parsed.data as unknown as Record<string, unknown>,
           // Coverage is frozen at issue — sending it would be refused.
-          ...(document?.status === "draft" ? { containerIds: [...coveredIds] } : {}),
+          ...(live.status === "draft" ? { containerIds: [...coveredIds] } : {}),
         });
       } else {
         const created = await create.mutateAsync({
@@ -385,14 +394,17 @@ export function SalesContractSheetForm({
           payload: parsed.data as unknown as Record<string, unknown>,
         });
         id = created.id;
+        setLive((l) => ({ ...l, id: created.id, number: created.documentNumber }));
         toast.success(`${created.documentNumber} saved as a draft`);
       }
       if (thenIssue && id) {
         await issue.mutateAsync({ id });
+        setLive((l) => ({ ...l, status: "issued" }));
         toast.success("Contract issued");
-      } else if (document) {
-        toast.success("Contract updated");
+      } else if (live.id) {
+        toast.success("Draft saved");
       }
+      setPreviewVersion((v) => v + 1);
       onSaved();
     } catch {
       // The global mutation cache already surfaced the message.
@@ -406,58 +418,35 @@ export function SalesContractSheetForm({
   const pickerLines = containerLines.filter((l) => allContainerIds.includes(l.containerId));
 
   return (
-    <Sheet open onOpenChange={(next) => !next && onClose()}>
-      <SheetContent className="w-full gap-0 overflow-y-auto data-[side=right]:sm:w-1/2 data-[side=right]:sm:max-w-none">
-        <SheetHeader className="p-6 pb-4">
-          <SheetTitle className="text-base">
-            Sales Contract{document ? ` · ${document.document_number}` : ""}
-          </SheetTitle>
-          <SheetDescription>
-            {document && document.status !== "draft"
-              ? "This contract has been issued. Only the reference fields left open stay editable — correcting anything else means voiding it and exporting the next revision."
-              : "Prefilled from this booking and its transactions. Quantities and amounts follow the containers you cover, so they always match the invoice raised against them."}
-          </SheetDescription>
-        </SheetHeader>
+    <DocumentEditorShell
+      title={`Sales Contract${live.number ? ` · ${live.number}` : ""}`}
+      description={
+        live.status !== "draft"
+          ? "This contract has been issued. Only the reference fields left open stay editable — correcting anything else means voiding it and exporting the next revision."
+          : "Prefilled from this booking and its transactions. Quantities and amounts follow the containers you cover, so they always match the invoice raised against them."
+      }
+      status={live.status}
+      documentId={live.id}
+      previewVersion={previewVersion}
+      pending={pending}
+      onClose={onClose}
+      onSaveDraft={() => void save(false)}
+      onSaveAndIssue={() => void save(true)}
+      onSave={() => void save(false)}
+    >
+      <>
+        <SalesContractFields_ state={{ values, setters: form.setters }} locked={isLocked} />
 
-        <div className="flex flex-col gap-5 px-6 pb-6">
-          <SalesContractFields_ state={{ values, setters: form.setters }} locked={locked} />
-
-          <Section title={`Containers covered — ${coveredIds.size} of ${allContainerIds.length}`}>
-            <CoveredContainers
-              lines={pickerLines}
-              covered={coveredIds}
-              onToggle={toggle}
-              disabled={locked("lines")}
-            />
-          </Section>
-        </div>
-
-        <SheetFooter className="flex-row items-center justify-end gap-2 border-t p-6">
-          <Button variant="outline" size="sm" onClick={onClose}>
-            Cancel
-          </Button>
-          {document && document.status !== "draft" ? (
-            <Button variant="blue" size="sm" disabled={pending} onClick={() => void save(false)}>
-              {pending ? "Saving…" : "Save"}
-            </Button>
-          ) : (
-            <>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={pending}
-                onClick={() => void save(false)}
-              >
-                {pending ? "Saving…" : "Save Draft"}
-              </Button>
-              <Button variant="blue" size="sm" disabled={pending} onClick={() => void save(true)}>
-                {pending ? "Saving…" : "Save & Issue"}
-              </Button>
-            </>
-          )}
-        </SheetFooter>
-      </SheetContent>
-    </Sheet>
+        <Section title={`Containers covered — ${coveredIds.size} of ${allContainerIds.length}`}>
+          <CoveredContainers
+            lines={pickerLines}
+            covered={coveredIds}
+            onToggle={toggle}
+            disabled={isLocked("lines")}
+          />
+        </Section>
+      </>
+    </DocumentEditorShell>
   );
 }
 

@@ -27,16 +27,9 @@ import type {
   ShipmentDocumentRow,
   ShipmentGroupRow,
 } from "@/components/bank/export-shipments/types";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
+import { DocumentEditorShell } from "@/components/bank/export-shipments/detail/document-editor-shell";
+import { isFieldEditable } from "@/lib/export-shipment/documents/editable";
 import { Textarea } from "@/components/ui/textarea";
 import {
   DOC_TYPE_META,
@@ -213,6 +206,23 @@ export function GenericDocumentForm({
     () => new Set(isEdit && document ? document.containerIds : lineIds),
   );
 
+  // The saved row this dialog is editing: null id until the first save; status
+  // flips to issued in place so the fields lock without reopening. Bumping the
+  // preview version reloads the PDF pane — only ever after a successful save.
+  const [live, setLive] = useState<{
+    id: string | null;
+    number: string | null;
+    status: "draft" | "issued" | "superseded" | "void";
+  }>({
+    id: document?.id ?? null,
+    number: document?.document_number ?? null,
+    status: (document?.status ?? "draft") as "draft" | "issued" | "superseded" | "void",
+  });
+  const [previewVersion, setPreviewVersion] = useState(0);
+  const isLockedKey = (key: string) =>
+    live.status === "draft" ? locked(key) : !isFieldEditable(key, docType, live.status);
+  const isLocked = isLockedKey;
+
   const create = ClientAPI.exportShipments.createDocument.useMutation();
   const update = ClientAPI.exportShipments.updateDocument.useMutation();
   const issue = ClientAPI.exportShipments.issueDocument.useMutation();
@@ -236,7 +246,7 @@ export function GenericDocumentForm({
 
     const payload: Payload = {
       ...values,
-      documentNumber: document?.document_number ?? values.documentNumber,
+      documentNumber: live.number ?? values.documentNumber,
     };
     const parsed = payloadSchemaFor(docType).safeParse(payload);
     if (!parsed.success) {
@@ -251,13 +261,13 @@ export function GenericDocumentForm({
     }
 
     try {
-      let id = document?.id;
+      let id = live.id;
       if (id) {
         await update.mutateAsync({
           id,
           payload: parsed.data as Payload,
           // Coverage is frozen at issue — sending it would be refused.
-          ...(document?.status === "draft" ? { containerIds: [...coveredIds] } : {}),
+          ...(live.status === "draft" ? { containerIds: [...coveredIds] } : {}),
         });
       } else {
         const created = await create.mutateAsync({
@@ -267,14 +277,17 @@ export function GenericDocumentForm({
           payload: parsed.data as Payload,
         });
         id = created.id;
+        setLive((l) => ({ ...l, id: created.id, number: created.documentNumber }));
         toast.success(`${created.documentNumber} saved as a draft`);
       }
       if (thenIssue && id) {
         await issue.mutateAsync({ id });
+        setLive((l) => ({ ...l, status: "issued" }));
         toast.success("Document issued");
-      } else if (document) {
-        toast.success("Document updated");
+      } else if (live.id) {
+        toast.success("Draft saved");
       }
+      setPreviewVersion((v) => v + 1);
       onSaved();
     } catch {
       // The global mutation cache already surfaced the message.
@@ -287,7 +300,7 @@ export function GenericDocumentForm({
   };
 
   const renderField = (spec: FieldSpec) => {
-    const isLocked = locked(spec.key);
+    const isLocked = isLockedKey(spec.key);
     const id = `doc-${spec.key}`;
 
     if (spec.kind === "party") {
@@ -349,72 +362,48 @@ export function GenericDocumentForm({
   };
 
   return (
-    <Sheet open onOpenChange={(next) => !next && onClose()}>
-      <SheetContent className="w-full gap-0 overflow-y-auto data-[side=right]:sm:w-1/2 data-[side=right]:sm:max-w-none">
-        <SheetHeader className="p-6 pb-4">
-          <SheetTitle className="text-base">
-            {DOC_TYPE_META[docType].label}
-            {document ? ` · ${document.document_number}` : ""}
-          </SheetTitle>
-          <SheetDescription>
-            {document && document.status !== "draft"
-              ? "This document has been issued. Only the reference fields left open stay editable — correcting anything else means voiding it and exporting the next revision."
-              : "Prefilled from this booking and its transactions. Weights, counts and totals follow the containers you cover, so they match every other document on this shipment."}
-          </SheetDescription>
-        </SheetHeader>
-
-        <div className="flex flex-col gap-5 px-6 pb-6">
-          {sections.map((section) => (
-            <div key={section.title} className="flex flex-col gap-2">
-              <h3 className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
-                {section.title}
-              </h3>
-              <Grid>{section.fields.map(renderField)}</Grid>
-            </div>
-          ))}
-
-          <div className="flex flex-col gap-2">
+    <DocumentEditorShell
+      title={`${DOC_TYPE_META[docType].label}${live.number ? ` · ${live.number}` : ""}`}
+      description={
+        live.status !== "draft"
+          ? "This document has been issued. Only the reference fields left open stay editable — correcting anything else means voiding it and exporting the next revision."
+          : "Prefilled from this booking and its transactions. Weights, counts and totals follow the containers you cover, so they match every other document on this shipment."
+      }
+      status={live.status}
+      documentId={live.id}
+      previewVersion={previewVersion}
+      pending={pending}
+      onClose={onClose}
+      onSaveDraft={() => void save(false)}
+      onSaveAndIssue={() => void save(true)}
+      onSave={() => void save(false)}
+    >
+      <>
+        {sections.map((section) => (
+          <div key={section.title} className="flex flex-col gap-2">
             <h3 className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
-              Containers covered — {coveredIds.size} of {lineIds.length}
+              {section.title}
             </h3>
-            <CoveredContainers
-              lines={lines}
-              covered={coveredIds}
-              onToggle={toggle}
-              disabled={locked("lines")}
-            />
-            <p className="text-muted-foreground text-xs">
-              Changing the coverage here changes only this document. Re-export the others if the
-              shipment itself changed.
-            </p>
+            <Grid>{section.fields.map(renderField)}</Grid>
           </div>
-        </div>
+        ))}
 
-        <SheetFooter className="flex-row items-center justify-end gap-2 border-t p-6">
-          <Button variant="outline" size="sm" onClick={onClose}>
-            Cancel
-          </Button>
-          {document && document.status !== "draft" ? (
-            <Button variant="blue" size="sm" disabled={pending} onClick={() => void save(false)}>
-              {pending ? "Saving…" : "Save"}
-            </Button>
-          ) : (
-            <>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={pending}
-                onClick={() => void save(false)}
-              >
-                {pending ? "Saving…" : "Save Draft"}
-              </Button>
-              <Button variant="blue" size="sm" disabled={pending} onClick={() => void save(true)}>
-                {pending ? "Saving…" : "Save & Issue"}
-              </Button>
-            </>
-          )}
-        </SheetFooter>
-      </SheetContent>
-    </Sheet>
+        <div className="flex flex-col gap-2">
+          <h3 className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
+            Containers covered — {coveredIds.size} of {lineIds.length}
+          </h3>
+          <CoveredContainers
+            lines={lines}
+            covered={coveredIds}
+            onToggle={toggle}
+            disabled={isLocked("lines")}
+          />
+          <p className="text-muted-foreground text-xs">
+            Changing the coverage here changes only this document. Re-export the others if the
+            shipment itself changed.
+          </p>
+        </div>
+      </>
+    </DocumentEditorShell>
   );
 }

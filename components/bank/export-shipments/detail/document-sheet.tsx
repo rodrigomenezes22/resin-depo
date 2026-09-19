@@ -30,16 +30,11 @@ import type {
   ShipmentDocumentRow,
   ShipmentGroupRow,
 } from "@/components/bank/export-shipments/types";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
+  DocumentEditorLoading,
+  DocumentEditorShell,
+} from "@/components/bank/export-shipments/detail/document-editor-shell";
 import { Textarea } from "@/components/ui/textarea";
 import {
   GenericDocumentForm,
@@ -107,22 +102,15 @@ export function DocumentSheet({
 
   if (!source) {
     return (
-      <Sheet open onOpenChange={(next) => !next && onClose()}>
-        {/* The width override MUST carry the data-[side=right] prefix: SheetContent's
-          own default is `data-[side=right]:sm:max-w-sm`, and a bare `sm:max-w-2xl`
-          has lower specificity and silently loses — the form then renders in a
-          384px column with every label wrapped. */}
-        <SheetContent className="w-full gap-0 overflow-y-auto data-[side=right]:sm:w-1/2 data-[side=right]:sm:max-w-none">
-          <SheetHeader className="p-6">
-            <SheetTitle className="text-base">{DOC_TYPE_META[docType].label}</SheetTitle>
-            <SheetDescription>
-              {draftQuery.isError
-                ? (draftQuery.error?.message ?? "Could not build this document.")
-                : "Reading the shipment…"}
-            </SheetDescription>
-          </SheetHeader>
-        </SheetContent>
-      </Sheet>
+      <DocumentEditorLoading
+        title={DOC_TYPE_META[docType].label}
+        message={
+          draftQuery.isError
+            ? (draftQuery.error?.message ?? "Could not build this document.")
+            : "Reading the shipment…"
+        }
+        onClose={onClose}
+      />
     );
   }
 
@@ -237,6 +225,22 @@ function DocumentSheetForm({
     () => new Set(isEdit && document ? document.containerIds : allLines.map((l) => l.containerId)),
   );
 
+  // The saved row this dialog is editing: null id until the first save; status
+  // flips to issued in place so the fields lock without reopening. Bumping the
+  // preview version reloads the PDF pane — only ever after a successful save.
+  const [live, setLive] = useState<{
+    id: string | null;
+    number: string | null;
+    status: "draft" | "issued" | "superseded" | "void";
+  }>({
+    id: document?.id ?? null,
+    number: document?.document_number ?? null,
+    status: (document?.status ?? "draft") as "draft" | "issued" | "superseded" | "void",
+  });
+  const [previewVersion, setPreviewVersion] = useState(0);
+  const isLockedKey = (key: string) =>
+    live.status === "draft" ? locked(key) : !isFieldEditable(key, docType, live.status);
+
   const create = ClientAPI.exportShipments.createDocument.useMutation();
   const update = ClientAPI.exportShipments.updateDocument.useMutation();
   const issue = ClientAPI.exportShipments.issueDocument.useMutation();
@@ -256,7 +260,7 @@ function DocumentSheetForm({
 
   const buildPayload = (): CommercialInvoiceFields => ({
     ...source,
-    documentNumber: document?.document_number ?? source.documentNumber,
+    documentNumber: live.number ?? source.documentNumber,
     invoiceDate,
     transactionDate: orNull(transactionDate),
     shippingDate: orNull(shippingDate),
@@ -304,13 +308,13 @@ function DocumentSheetForm({
     }
 
     try {
-      let id = document?.id;
+      let id = live.id;
       if (id) {
         await update.mutateAsync({
           id,
           payload: parsed.data as unknown as Record<string, unknown>,
           // Coverage is frozen at issue — sending it would be refused.
-          ...(document?.status === "draft" ? { containerIds: [...coveredIds] } : {}),
+          ...(live.status === "draft" ? { containerIds: [...coveredIds] } : {}),
         });
       } else {
         const created = await create.mutateAsync({
@@ -320,15 +324,18 @@ function DocumentSheetForm({
           payload: parsed.data as unknown as Record<string, unknown>,
         });
         id = created.id;
+        setLive((l) => ({ ...l, id: created.id, number: created.documentNumber }));
         toast.success(`${created.documentNumber} saved as a draft`);
       }
 
       if (thenIssue && id) {
         await issue.mutateAsync({ id });
+        setLive((l) => ({ ...l, status: "issued" }));
         toast.success("Document issued");
-      } else if (document) {
-        toast.success("Document updated");
+      } else if (live.id) {
+        toast.success("Draft saved");
       }
+      setPreviewVersion((v) => v + 1);
       onSaved();
     } catch {
       // The global mutation cache already surfaced the message.
@@ -343,7 +350,7 @@ function DocumentSheetForm({
     onChange: (v: string) => void,
     opts: { span?: 2 | 3 | 4 | 6 | 8 | 12; type?: string } = {},
   ) => {
-    const isLocked = locked(key);
+    const isLocked = isLockedKey(key);
     const id = `doc-${key}`;
     return (
       <Cell label={label} span={opts.span ?? 4} htmlFor={id}>
@@ -366,7 +373,7 @@ function DocumentSheetForm({
     party: PartyBlock,
     setParty: (p: PartyBlock) => void,
   ) => {
-    const isLocked = locked(key);
+    const isLocked = isLockedKey(key);
     const set = (k: keyof PartyBlock) => (v: string) => setParty({ ...party, [k]: v || null });
     return (
       <Grid className="col-span-12">
@@ -467,184 +474,141 @@ function DocumentSheetForm({
   const currency = source.currency;
 
   return (
-    <Sheet open onOpenChange={(next) => !next && onClose()}>
-      {/* The width override MUST carry the data-[side=right] prefix: SheetContent's
-          own default is `data-[side=right]:sm:max-w-sm`, and a bare `sm:max-w-2xl`
-          has lower specificity and silently loses — the form then renders in a
-          384px column with every label wrapped. */}
-      <SheetContent className="w-full gap-0 overflow-y-auto data-[side=right]:sm:w-1/2 data-[side=right]:sm:max-w-none">
-        <SheetHeader className="p-6 pb-4">
-          <SheetTitle className="text-base">
-            {DOC_TYPE_META[docType].label}
-            {document ? ` · ${document.document_number}` : ""}
-          </SheetTitle>
-          <SheetDescription>
-            {document && document.status !== "draft"
-              ? "This document has been issued. Only the reference fields left open stay editable — correcting anything else means voiding it and exporting the next revision."
-              : "Prefilled from this booking and its transactions. Every field is editable; the money follows the containers you cover."}
-          </SheetDescription>
-        </SheetHeader>
-
-        <div className="flex flex-col gap-5 px-6 pb-6">
-          <FormSection title="Header & references">
-            <Grid>
-              {field("invoiceDate", "Invoice date", invoiceDate, setInvoiceDate, { type: "date" })}
-              {field("transactionDate", "Transaction date", transactionDate, setTransactionDate, {
-                type: "date",
-              })}
-              {field("shippingDate", "Shipping date", shippingDate, setShippingDate, {
-                type: "date",
-              })}
-              {field("paymentTerms", "Payment terms", paymentTerms, setPaymentTerms, { span: 6 })}
-              {/* A real date: derivePaymentDue() already emits YYYY-MM-DD, and the
+    <DocumentEditorShell
+      title={`${DOC_TYPE_META[docType].label}${live.number ? ` · ${live.number}` : ""}`}
+      description={
+        live.status !== "draft"
+          ? "This document has been issued. Only the reference fields left open stay editable — correcting anything else means voiding it and exporting the next revision."
+          : "Prefilled from this booking and its transactions. Every field is editable; the money follows the containers you cover."
+      }
+      status={live.status}
+      documentId={live.id}
+      previewVersion={previewVersion}
+      pending={pending}
+      onClose={onClose}
+      onSaveDraft={() => void save(false)}
+      onSaveAndIssue={() => void save(true)}
+      onSave={() => void save(false)}
+    >
+      <>
+        <FormSection title="Header & references">
+          <Grid>
+            {field("invoiceDate", "Invoice date", invoiceDate, setInvoiceDate, { type: "date" })}
+            {field("transactionDate", "Transaction date", transactionDate, setTransactionDate, {
+              type: "date",
+            })}
+            {field("shippingDate", "Shipping date", shippingDate, setShippingDate, {
+              type: "date",
+            })}
+            {field("paymentTerms", "Payment terms", paymentTerms, setPaymentTerms, { span: 6 })}
+            {/* A real date: derivePaymentDue() already emits YYYY-MM-DD, and the
                   PDF prints it beside Invoice Date, so the picker matches both. */}
-              {field("paymentDue", "Payment due", paymentDue, setPaymentDue, {
-                span: 3,
-                type: "date",
-              })}
-              {field("incoterms", "Incoterms", incoterms, setIncoterms, { span: 3 })}
-              {field(
-                "customerReference",
-                "Customer ref #",
-                customerReference,
-                setCustomerReference,
-              )}
-              {field(
-                "carrierBookingNumber",
-                "Carrier booking #",
-                carrierBookingNumber,
-                setCarrierBookingNumber,
-              )}
-              {field("hblNumber", "HBL #", hblNumber, setHblNumber)}
-            </Grid>
-          </FormSection>
+            {field("paymentDue", "Payment due", paymentDue, setPaymentDue, {
+              span: 3,
+              type: "date",
+            })}
+            {field("incoterms", "Incoterms", incoterms, setIncoterms, { span: 3 })}
+            {field("customerReference", "Customer ref #", customerReference, setCustomerReference)}
+            {field(
+              "carrierBookingNumber",
+              "Carrier booking #",
+              carrierBookingNumber,
+              setCarrierBookingNumber,
+            )}
+            {field("hblNumber", "HBL #", hblNumber, setHblNumber)}
+          </Grid>
+        </FormSection>
 
-          <FormSection title="Routing">
-            <Grid>
-              {field("portOfLoading", "Port of loading", portOfLoading, setPortOfLoading, {
-                span: 6,
-              })}
-              {field("portOfDischarge", "Port of discharge", portOfDischarge, setPortOfDischarge, {
-                span: 6,
-              })}
-              {field("carrierName", "Carrier", carrierName, setCarrierName)}
-              {field("vesselName", "Vessel", vesselName, setVesselName)}
-              {field("voyageNumber", "Voyage #", voyageNumber, setVoyageNumber)}
-              {field(
-                "sailingOnOrAbout",
-                "Sailing on/about",
-                sailingOnOrAbout,
-                setSailingOnOrAbout,
-                {
-                  type: "date",
-                  span: 4,
-                },
-              )}
-            </Grid>
-          </FormSection>
+        <FormSection title="Routing">
+          <Grid>
+            {field("portOfLoading", "Port of loading", portOfLoading, setPortOfLoading, {
+              span: 6,
+            })}
+            {field("portOfDischarge", "Port of discharge", portOfDischarge, setPortOfDischarge, {
+              span: 6,
+            })}
+            {field("carrierName", "Carrier", carrierName, setCarrierName)}
+            {field("vesselName", "Vessel", vesselName, setVesselName)}
+            {field("voyageNumber", "Voyage #", voyageNumber, setVoyageNumber)}
+            {field("sailingOnOrAbout", "Sailing on/about", sailingOnOrAbout, setSailingOnOrAbout, {
+              type: "date",
+              span: 4,
+            })}
+          </Grid>
+        </FormSection>
 
-          <FormSection title="Goods">
-            <Grid>
-              {field(
-                "descriptionOfGoods",
-                "Description",
-                descriptionOfGoods,
-                setDescriptionOfGoods,
-                { span: 12 },
-              )}
-              {field("packaging", "Packaging", packaging, setPackaging)}
-              {field("commodityCode", "HS / commodity code", commodityCode, setCommodityCode)}
-              {field("countryOfOrigin", "Country of origin", countryOfOrigin, setCountryOfOrigin)}
-              <Cell label="Marks &amp; numbers" span={12} htmlFor="doc-marks">
-                <Textarea
-                  id="doc-marks"
-                  rows={2}
-                  value={marksAndNumbers}
-                  disabled={locked("marksAndNumbers")}
-                  onChange={(e) => setMarksAndNumbers(e.target.value)}
-                />
-              </Cell>
-            </Grid>
-          </FormSection>
+        <FormSection title="Goods">
+          <Grid>
+            {field("descriptionOfGoods", "Description", descriptionOfGoods, setDescriptionOfGoods, {
+              span: 12,
+            })}
+            {field("packaging", "Packaging", packaging, setPackaging)}
+            {field("commodityCode", "HS / commodity code", commodityCode, setCommodityCode)}
+            {field("countryOfOrigin", "Country of origin", countryOfOrigin, setCountryOfOrigin)}
+            <Cell label="Marks &amp; numbers" span={12} htmlFor="doc-marks">
+              <Textarea
+                id="doc-marks"
+                rows={2}
+                value={marksAndNumbers}
+                disabled={isLockedKey("marksAndNumbers")}
+                onChange={(e) => setMarksAndNumbers(e.target.value)}
+              />
+            </Cell>
+          </Grid>
+        </FormSection>
 
-          <FormSection title="Shipper">
-            <Grid>
-              <Cell label="Beneficiary / Shipper" span={12}>
-                <div className="text-muted-foreground flex h-8 items-center text-sm">
-                  {source.shipper.name}
-                  <span className="ml-2 text-xs">from the exchange organization</span>
-                </div>
-              </Cell>
-            </Grid>
-          </FormSection>
+        <FormSection title="Shipper">
+          <Grid>
+            <Cell label="Beneficiary / Shipper" span={12}>
+              <div className="text-muted-foreground flex h-8 items-center text-sm">
+                {source.shipper.name}
+                <span className="ml-2 text-xs">from the exchange organization</span>
+              </div>
+            </Cell>
+          </Grid>
+        </FormSection>
 
-          <FormSection title="Consignee">
-            {partyFields("consignee", "Name", consignee, setConsignee)}
-          </FormSection>
-          <FormSection title="Notify party">
-            {partyFields("notifyParty", "Name", notifyParty, setNotifyParty)}
-          </FormSection>
+        <FormSection title="Consignee">
+          {partyFields("consignee", "Name", consignee, setConsignee)}
+        </FormSection>
+        <FormSection title="Notify party">
+          {partyFields("notifyParty", "Name", notifyParty, setNotifyParty)}
+        </FormSection>
 
-          <FormSection title={`Containers covered — ${coveredIds.size} of ${allLines.length}`}>
-            <CoveredContainers
-              lines={allLines}
-              covered={coveredIds}
-              onToggle={toggle}
-              disabled={locked("lines")}
-            />
-          </FormSection>
+        <FormSection title={`Containers covered — ${coveredIds.size} of ${allLines.length}`}>
+          <CoveredContainers
+            lines={allLines}
+            covered={coveredIds}
+            onToggle={toggle}
+            disabled={isLockedKey("lines")}
+          />
+        </FormSection>
 
-          {/* Money is derived from the covered containers' CONTRACT weights, so
+        {/* Money is derived from the covered containers' CONTRACT weights, so
               it moves with the checkboxes above and is never typed. */}
-          <FormSection title="Totals">
-            <Grid>
-              <Cell label="Net weight" span={3}>
-                <ReadOut>{kg(totals.netWeightKg)} kg</ReadOut>
-              </Cell>
-              <Cell label="Gross weight" span={3}>
-                <ReadOut>{kg(totals.grossWeightKg)} kg</ReadOut>
-              </Cell>
-              <Cell label="FOB" span={3}>
-                <ReadOut>{money(totals.fobTotal, currency)}</ReadOut>
-              </Cell>
-              <Cell label="Freight" span={3}>
-                <ReadOut>{money(totals.freightTotal, currency)}</ReadOut>
-              </Cell>
-              <Cell label="Total value" span={12}>
-                <div className="flex h-8 items-center text-sm font-semibold tabular-nums">
-                  {money(totals.totalValue, currency)}
-                </div>
-              </Cell>
-            </Grid>
-          </FormSection>
-        </div>
-
-        <SheetFooter className="flex-row items-center justify-end gap-2 border-t p-6">
-          <Button variant="outline" size="sm" onClick={onClose}>
-            Cancel
-          </Button>
-          {document && document.status !== "draft" ? (
-            <Button variant="blue" size="sm" disabled={pending} onClick={() => void save(false)}>
-              {pending ? "Saving…" : "Save"}
-            </Button>
-          ) : (
-            <>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={pending}
-                onClick={() => void save(false)}
-              >
-                {pending ? "Saving…" : "Save Draft"}
-              </Button>
-              <Button variant="blue" size="sm" disabled={pending} onClick={() => void save(true)}>
-                {pending ? "Saving…" : "Save & Issue"}
-              </Button>
-            </>
-          )}
-        </SheetFooter>
-      </SheetContent>
-    </Sheet>
+        <FormSection title="Totals">
+          <Grid>
+            <Cell label="Net weight" span={3}>
+              <ReadOut>{kg(totals.netWeightKg)} kg</ReadOut>
+            </Cell>
+            <Cell label="Gross weight" span={3}>
+              <ReadOut>{kg(totals.grossWeightKg)} kg</ReadOut>
+            </Cell>
+            <Cell label="FOB" span={3}>
+              <ReadOut>{money(totals.fobTotal, currency)}</ReadOut>
+            </Cell>
+            <Cell label="Freight" span={3}>
+              <ReadOut>{money(totals.freightTotal, currency)}</ReadOut>
+            </Cell>
+            <Cell label="Total value" span={12}>
+              <div className="flex h-8 items-center text-sm font-semibold tabular-nums">
+                {money(totals.totalValue, currency)}
+              </div>
+            </Cell>
+          </Grid>
+        </FormSection>
+      </>
+    </DocumentEditorShell>
   );
 }
 
