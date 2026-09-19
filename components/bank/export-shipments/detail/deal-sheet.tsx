@@ -191,9 +191,9 @@ export function DealSheet({
             </SheetDescription>
           </SheetHeader>
 
-          <div className="flex flex-col gap-4 px-6 pb-6">
+          <div className="form-contrast flex flex-col gap-4 px-6 pb-6">
             <Grid>
-              <Cell label="Order # (blank = next)" span={4} htmlFor="d-order">
+              <Cell label="Order #" span={4} htmlFor="d-order">
                 <Input
                   id="d-order"
                   type="number"
@@ -204,7 +204,7 @@ export function DealSheet({
                   onChange={(e) => setOrderNumber(e.target.value)}
                 />
               </Cell>
-              <Cell label="Legacy / paper ref" span={4} htmlFor="d-legacy">
+              <Cell label="Legacy ref" span={4} htmlFor="d-legacy">
                 <Input
                   id="d-legacy"
                   className="h-8"
@@ -335,7 +335,7 @@ export function DealSheet({
                   onChange={(e) => onQtyChange(e.target.value)}
                 />
               </Cell>
-              <Cell label="Contract weight (lbs)" span={4} htmlFor="d-lbs">
+              <Cell label="Contract lbs" span={4} htmlFor="d-lbs">
                 <Input
                   id="d-lbs"
                   type="number"
@@ -350,7 +350,7 @@ export function DealSheet({
                 />
               </Cell>
 
-              <Cell label="Sell price ($/lb)" span={4} htmlFor="d-price">
+              <Cell label="Price $/lb" span={4} htmlFor="d-price">
                 <Input
                   id="d-price"
                   type="number"
@@ -390,7 +390,7 @@ export function DealSheet({
                   </SelectContent>
                 </Select>
               </Cell>
-              <Cell label="Shipping terms" span={3} htmlFor="d-ship">
+              <Cell label="Ship terms" span={3} htmlFor="d-ship">
                 <Input
                   id="d-ship"
                   className="h-8"

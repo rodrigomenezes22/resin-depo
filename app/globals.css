@@ -237,3 +237,25 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* High-contrast fields for dense entry drawers (Add container / Deal).
+   On the white sheet the default `--input` border (#ebebeb) all but vanishes,
+   so the desk cannot see where one field ends and the next begins. Add
+   `form-contrast` to the drawer body: fields get a dark gray border and a
+   faint fill; focus keeps the normal ring. Unlayered so it beats `border-input`. */
+.form-contrast [data-slot="input"],
+.form-contrast [data-slot="textarea"],
+.form-contrast [data-slot="select-trigger"] {
+  border-color: #6b6b6b;
+  background-color: #fafafa;
+}
+.form-contrast [data-slot="input"]:focus-visible,
+.form-contrast [data-slot="textarea"]:focus-visible,
+.form-contrast [data-slot="select-trigger"]:focus-visible {
+  border-color: var(--ring);
+  background-color: #ffffff;
+}
+.form-contrast [data-slot="input"]::placeholder,
+.form-contrast [data-slot="textarea"]::placeholder {
+  color: #8a8a8a;
+}
