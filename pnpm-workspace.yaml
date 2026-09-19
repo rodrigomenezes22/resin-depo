@@ -1,8 +1,7 @@
 packages:
   - .
+# pnpm 11: postinstall scripts run only for packages listed here. sharp is
+# Next.js image optimization; unrs-resolver is eslint-import-resolver's binary.
 allowBuilds:
-  sharp: set this to true or false
-  unrs-resolver: set this to true or false
-ignoredBuiltDependencies:
-  - sharp
-  - unrs-resolver
+  sharp: true
+  unrs-resolver: true
