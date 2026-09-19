@@ -3,7 +3,8 @@
 //   pnpm admin:seed                         # admin@tpe.dev / testpassword123
 //   pnpm admin:seed you@example.com secret  # custom credentials
 //
-// Needs SUPABASE_SERVICE_ROLE_KEY (Project Settings → API Keys → secret key)
+// Needs SUPABASE_SECRET_KEY (Project Settings → API Keys → secret key, sb_secret_…)
+// or the legacy SUPABASE_SERVICE_ROLE_KEY
 // in .env.local. Never expose that key to the browser.
 import { readFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
@@ -21,9 +22,13 @@ for (const file of [".env", ".env.local"]) {
 }
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+// Either key format works for the Admin API: the new sb_secret_… key or the
+// legacy service_role JWT.
+const serviceKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
 if (!url || !serviceKey) {
-  console.error("Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in .env.local");
+  console.error(
+    "Missing NEXT_PUBLIC_SUPABASE_URL, or SUPABASE_SECRET_KEY / SUPABASE_SERVICE_ROLE_KEY, in .env.local",
+  );
   process.exit(1);
 }
 
