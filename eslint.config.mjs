@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Written by `supabase start` (gitignored): the bundled edge-runtime entry
+    // point, minified onto one line. Linting it produces ~150 phantom errors.
+    "supabase/.temp/**",
   ]),
 ]);
 

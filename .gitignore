@@ -58,3 +58,7 @@ node_modules/
 
 # Local-only DB fixtures (scripts/snapshot-local-orders.mjs) — never shared
 supabase/seeds/local-*.sql
+
+# supabase CLI scratch
+supabase/.temp/
+supabase/.branches/
