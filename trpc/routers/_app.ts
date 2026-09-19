@@ -1,10 +1,14 @@
 import { createTRPCRouter, protectedProcedure } from "../init";
+import { exportShipmentsRouter } from "./export-shipments";
 import { locationsRouter } from "./locations";
 import { referenceRouter } from "./reference";
+import { shipmentFilesRouter } from "./shipment-files";
 
 export const appRouter = createTRPCRouter({
+  exportShipments: exportShipmentsRouter,
   locations: locationsRouter,
   reference: referenceRouter,
+  shipmentFiles: shipmentFilesRouter,
 
   /** Current user — used by the shell header. */
   me: protectedProcedure.query(async ({ ctx }) => {
