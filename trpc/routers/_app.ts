@@ -1,6 +1,11 @@
 import { createTRPCRouter, protectedProcedure } from "../init";
+import { locationsRouter } from "./locations";
+import { referenceRouter } from "./reference";
 
 export const appRouter = createTRPCRouter({
+  locations: locationsRouter,
+  reference: referenceRouter,
+
   /** Current user — used by the shell header. */
   me: protectedProcedure.query(async ({ ctx }) => {
     const { data: profile } = await ctx.db
