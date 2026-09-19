@@ -34,10 +34,7 @@ INSERT INTO public.locations (id, name, kind, city, state, country, unlocode) VA
   ('d0000000-0000-4000-8000-000000000003', 'Port of Houston',  'port', 'Houston',  'TX', 'United States', 'USHOU'),
   ('d0000000-0000-4000-8000-000000000004', 'Port of Shanghai', 'port', 'Shanghai', NULL, 'China',         'CNSHA');
 
--- Products ------------------------------------------------------------------
-INSERT INTO public.products (id, name, base_unit, hs_code, country_of_origin) VALUES
-  ('c0000000-0000-4000-8000-000000000005', 'HDPE Blow Mold', 'lb', '3901.20.00', 'United States'),
-  ('c0000000-0000-4000-8000-000000000001', 'PP Homopolymer', 'lb', '3902.10.00', 'United States');
+-- Products: the nine TPE grades come from migration 20260918000100_products_catalogue.sql.
 
 -- Bank account (placeholder numbers — replace through Settings → Company) --
 INSERT INTO public.bank_accounts
