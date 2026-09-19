@@ -191,7 +191,7 @@ export function DealSheet({
             </SheetDescription>
           </SheetHeader>
 
-          <div className="form-contrast flex flex-col gap-4 px-6 pb-6">
+          <div className="flex flex-col gap-4 px-6 pb-6">
             <Grid>
               <Cell label="Order #" span={4} htmlFor="d-order">
                 <Input

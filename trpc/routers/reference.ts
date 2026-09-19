@@ -205,7 +205,7 @@ export const referenceRouter = createTRPCRouter({
         let q = ctx.db
           .from("organizations")
           .select(
-            "id, name, role, service_kind, phone, email, tax_id, eori, contact_name, payment_terms_days, deactivated_at, created_at, links:organization_locations(role, is_primary, locations(city, state, country))",
+            "id, name, role, service_kind, phone, email, tax_id, eori, contact_name, payment_terms_days, deactivated_at, created_at, links:organization_locations(role, is_primary, locations(city, state, country)), deals:matched_orders!matched_orders_buyer_company_id_fkey(count)",
           )
           .neq("role", "exchange")
           .order("name");
@@ -214,13 +214,15 @@ export const referenceRouter = createTRPCRouter({
         if (input?.search) q = q.ilike("name", `%${input.search}%`);
         const { data, error } = await q;
         if (error) dbFail(error, "Parties");
-        return (data ?? []).map(({ links, ...org }) => {
+        return (data ?? []).map(({ links, deals, ...org }) => {
           const hq = links.find((l) => l.role === "headquarters")?.locations ?? null;
           return {
             ...org,
             city: hq?.city ?? null,
             state: hq?.state ?? null,
             country: hq?.country ?? null,
+            // PostgREST count embed: [{ count: n }]. Containers sold to this party.
+            deal_count: deals?.[0]?.count ?? 0,
           };
         });
       }),
