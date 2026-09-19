@@ -97,7 +97,7 @@ function PartyGrid({
     },
     {
       key: "deal_count",
-      header: "Containers",
+      header: "Purchases",
       align: "right",
       sortable: true,
       accessor: (r) => r.deal_count,

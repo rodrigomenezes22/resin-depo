@@ -1,6 +1,8 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
+import { LBS_PER_UNIT } from "@/lib/units";
+
 import { buildCommercialInvoiceDraft } from "@/lib/export-shipment/documents/commercial-invoice";
 import { buildCertificateOfOriginDraft } from "@/lib/export-shipment/documents/certificate-of-origin";
 import { buildDocumentContext } from "@/lib/export-shipment/documents/context";
@@ -70,25 +72,39 @@ const CONTAINER_UNITS = [
   "container_40hc",
 ] as const;
 
-/** The trade line typed in the "Add container" drawer (resin-depo). */
-const dealFields = {
+/** The Purchase card (resin-depo): the shipment's parent deal. */
+const purchaseFields = {
   orderNumber: z.number().int().positive().optional(),
   legacyNumber: z.string().trim().max(60).nullable().optional(),
   buyerOrgId: z.string().uuid(),
   productId: z.string().uuid(),
-  unit: z.enum(CONTAINER_UNITS),
-  qty: z.number().positive().default(1),
-  quantityLbs: z.number().positive(),
-  sellPricePerLb: z.number().min(0),
   quality: z.enum(["prime", "offgrade", "regrind"]).optional(),
   buyerTerms: z.string().trim().max(120).nullable().optional(),
   buyerPo: z.string().trim().max(120).nullable().optional(),
   shippingTerms: z.string().trim().max(60).nullable().optional(),
+  incoterm: z.enum(["EXW", "FCA", "FAS", "FOB", "CFR", "CIF", "DAP", "DDP"]).optional(),
+  buyPricePerLb: z.number().min(0),
+  sellPricePerLb: z.number().min(0),
   tolerancePct: z.number().min(0).max(100).optional(),
   insuranceTerms: z.string().trim().max(200).nullable().optional(),
   shipmentWindow: z.string().trim().max(200).nullable().optional(),
   notes: z.string().trim().max(2000).nullable().optional(),
 };
+
+/** "Add container" (resin-depo): the physical facts of N identical legs. */
+const containerLegFields = {
+  unit: z.enum(CONTAINER_UNITS),
+  count: z.number().int().min(1).max(20).default(1),
+  quantityLbs: z.number().positive().optional(),
+  packageKind: z.string().trim().max(40).nullable().optional(),
+  packageCount: z.number().int().positive().nullable().optional(),
+  packageWeightLbs: z.number().positive().nullable().optional(),
+  marksAndNumbers: z.string().trim().max(2000).nullable().optional(),
+};
+
+/** Columns of the parent deal the Purchase card shows and the legs inherit. */
+const PURCHASE_SELECT =
+  "id, display_number, legacy_number, notes, qty, unit, quantity_lbs, created_at, broker_id, buyer_company_id, buyer_company_text, product_id, product_text, quality, buyer_terms, buyer_po, shipping_terms, tpe_buy_price, tpe_sell_price, tolerance_pct, insurance_terms, shipment_window, seller_company_id, seller_company_text, products(name, hs_code, country_of_origin)";
 
 const GROUP_STATUS = z.enum(["draft", "booked", "sailed", "arrived", "closed", "cancelled"]);
 const INCOTERM = z.enum(["EXW", "FCA", "FAS", "FOB", "CFR", "CIF", "DAP", "DDP"]);
@@ -221,7 +237,7 @@ export const exportShipmentsRouter = createTRPCRouter({
       let query = ctx.db
         .from("shipment_groups")
         .select(
-          "id, display_number, status, incoterm, currency, vessel_name, voyage_number, master_bl_number, etd, eta, created_at, rolled_from_group_id, carrier:organizations(id, name), pol:locations!shipment_groups_pol_location_id_fkey(id, name, unlocode), pod:locations!shipment_groups_pod_location_id_fkey(id, name, unlocode), shipment_containers!shipment_containers_shipment_group_id_fkey(id, container_number, matched_orders(quantity_lbs, buyer_company_text))",
+          "id, display_number, status, incoterm, currency, vessel_name, voyage_number, master_bl_number, etd, eta, created_at, rolled_from_group_id, carrier:organizations(id, name), pol:locations!shipment_groups_pol_location_id_fkey(id, name, unlocode), pod:locations!shipment_groups_pod_location_id_fkey(id, name, unlocode), shipment_containers!shipment_containers_shipment_group_id_fkey(id, container_number, matched_orders(quantity_lbs, buyer_company_text)), deal:shipment_group_deals(matched_orders(buyer_company_text))",
         )
         .order("created_at", { ascending: false });
       if (input.status) query = query.eq("status", input.status);
@@ -232,8 +248,14 @@ export const exportShipmentsRouter = createTRPCRouter({
       let rows = (data ?? []).map((g) => {
         const containers = g.shipment_containers ?? [];
         // One booking is one customer, so the first buyer names the shipment.
-        const buyer = containers.find((c) => c.matched_orders?.buyer_company_text)?.matched_orders
-          ?.buyer_company_text;
+        // PostgREST may hand the one-to-one deal embed back as an object or a
+        // one-element array; accept either.
+        const dealRaw: unknown = g.deal;
+        const dealRow = (Array.isArray(dealRaw) ? dealRaw[0] : dealRaw) as
+          { matched_orders: { buyer_company_text: string | null } | null } | null | undefined;
+        const buyer =
+          containers.find((c) => c.matched_orders?.buyer_company_text)?.matched_orders
+            ?.buyer_company_text ?? dealRow?.matched_orders?.buyer_company_text;
         return {
           id: g.id,
           display_number: g.display_number,
@@ -329,9 +351,12 @@ export const exportShipmentsRouter = createTRPCRouter({
         ? ((rolledFromRaw[0] ?? null) as RolledFrom)
         : ((rolledFromRaw ?? null) as RolledFrom);
 
+      const deal = await purchaseOf(ctx.db, input.id);
+
       return {
         ...group,
         rolled_from,
+        deal,
         containers: (containers ?? []).map((c) => ({
           ...c,
           parent_display_number: c.matched_orders?.parent_matched_order_id
@@ -349,8 +374,23 @@ export const exportShipmentsRouter = createTRPCRouter({
    * trigger will reject.
    */
   groupable: requirePermission("admin:view")
-    .input(z.object({ search: z.string().trim().nullish() }).default({}))
+    .input(
+      z
+        .object({ search: z.string().trim().nullish(), groupId: z.string().uuid().nullish() })
+        .default({}),
+    )
     .query(async ({ ctx, input }) => {
+      // resin-depo: containers are legs of the shipment's purchase, so "Add
+      // existing" only ever re-attaches a leg that was removed from THIS
+      // shipment. A purchase with no legs yet is not a conversion parent in the
+      // DB's eyes, so it is excluded here explicitly.
+      const parent = input.groupId ? await purchaseOf(ctx.db, input.groupId) : null;
+      if (input.groupId && !parent) return [];
+      const { data: dealLinks } = await ctx.db
+        .from("shipment_group_deals")
+        .select("matched_order_id");
+      const purchaseIds = new Set((dealLinks ?? []).map((d) => d.matched_order_id));
+
       const { data: rows } = await ctx.db
         .from("matched_orders")
         .select(
@@ -371,7 +411,11 @@ export const exportShipmentsRouter = createTRPCRouter({
       );
 
       let free = (rows ?? []).filter(
-        (r) => !parentIds.has(r.id) && !r.shipment_containers?.shipment_group_id,
+        (r) =>
+          !parentIds.has(r.id) &&
+          !purchaseIds.has(r.id) &&
+          !r.shipment_containers?.shipment_group_id &&
+          (!parent || r.parent_matched_order_id === parent.id),
       );
 
       // A conversion leg is DISPLAYED under its parent's number (05025-CN2),
@@ -437,197 +481,341 @@ export const exportShipmentsRouter = createTRPCRouter({
    * show up in the list as an empty booking nobody opened.
    */
   // ===========================================================================
-  // Deals — resin-depo's replacement for TPE's ledger entry point
+  // Purchase — resin-depo's replacement for TPE's ledger entry point
   // ===========================================================================
-  // In TPE a container joins a shipment from the Transaction Summary: the
-  // matched_orders row already exists. resin-depo has no ledger, so the desk
-  // types the trade line here, once, and it is written in TPE's shape
-  // (matched_orders, market international, status matched) and put on the
-  // manifest in the same call. `assignToGroup` still runs the DB guard, so
-  // the eligibility rules cannot drift from TPE's.
+  // In TPE a container joins a shipment from the Transaction Summary: the desk
+  // already has a deal (matched_orders row) and CONVERTS it into container
+  // legs (convert_matched_order). resin-depo has no ledger, so the Purchase
+  // card on the shipment page IS that parent deal — one per shipment, linked
+  // through shipment_group_deals — and "Add container" mints its legs exactly
+  // the way the conversion does: each leg copies the parent's commercial
+  // columns (DEAL_COPY_COLUMNS) and carries parent_matched_order_id +
+  // leg_index, so it prints as "900001-CH2" and the documents read buyer /
+  // terms / prices off the leg as they always did.
 
   /**
-   * Create a trade line AND its container on a shipment in one round trip.
-   * The matched_orders row is deleted again if the manifest insert is refused,
-   * mirroring the self-cleanup TPE's createFromTransactions does.
+   * Create or update the shipment's purchase (parent deal). On update the
+   * commercial columns are pushed down to every existing leg, so a price or
+   * terms change never leaves a container on the old number.
    */
-  createContainer: requirePermission("admin:view")
-    .input(z.object({ groupId: z.string().uuid() }).extend(dealFields))
+  upsertDeal: requirePermission("admin:view")
+    .input(z.object({ groupId: z.string().uuid() }).extend(purchaseFields))
     .mutation(async ({ ctx, input }) => {
-      const { groupId, ...deal } = input;
-      const [{ data: group }, { data: buyer }, { data: product }, { data: exchange }] =
-        await Promise.all([
-          ctx.db.from("shipment_groups").select("id, incoterm").eq("id", groupId).maybeSingle(),
-          ctx.db.from("organizations").select("id, name").eq("id", deal.buyerOrgId).maybeSingle(),
-          ctx.db.from("products").select("id, name").eq("id", deal.productId).maybeSingle(),
-          ctx.db
-            .from("organizations")
-            .select("id, name")
-            .eq("role", "exchange")
-            .limit(1)
-            .maybeSingle(),
-        ]);
+      const {
+        groupId,
+        incoterm,
+        orderNumber,
+        legacyNumber,
+        notes,
+        buyerOrgId,
+        productId,
+        ...rest
+      } = input;
+      const [
+        { data: group },
+        { data: buyer },
+        { data: product },
+        { data: exchange },
+        { data: link },
+      ] = await Promise.all([
+        ctx.db.from("shipment_groups").select("id, incoterm").eq("id", groupId).maybeSingle(),
+        ctx.db.from("organizations").select("id, name").eq("id", buyerOrgId).maybeSingle(),
+        ctx.db.from("products").select("id, name").eq("id", productId).maybeSingle(),
+        ctx.db
+          .from("organizations")
+          .select("id, name")
+          .eq("role", "exchange")
+          .limit(1)
+          .maybeSingle(),
+        ctx.db
+          .from("shipment_group_deals")
+          .select("matched_order_id")
+          .eq("shipment_group_id", groupId)
+          .maybeSingle(),
+      ]);
       if (!group) throw new TRPCError({ code: "NOT_FOUND", message: "Shipment not found." });
       if (!buyer) throw new TRPCError({ code: "NOT_FOUND", message: "Buyer not found." });
       if (!product) throw new TRPCError({ code: "NOT_FOUND", message: "Product not found." });
 
-      const { data: order, error: orderError } = await ctx.db
-        .from("matched_orders")
-        .insert({
-          ...(deal.orderNumber ? { display_number: deal.orderNumber } : {}),
-          market: "international",
-          status: "matched",
-          ship_status: "inventory",
-          unit: deal.unit,
-          qty: deal.qty,
-          quantity_lbs: deal.quantityLbs,
-          tpe_sell_price: deal.sellPricePerLb,
-          tpe_buy_price: 0,
-          buyer_company_id: buyer.id,
-          buyer_company_text: buyer.name,
-          seller_company_id: exchange?.id ?? null,
-          seller_company_text: exchange?.name ?? "The Plastics Exchange",
-          product_id: product.id,
-          product_text: product.name,
-          quality: deal.quality ?? "prime",
-          buyer_terms: deal.buyerTerms ?? null,
-          buyer_po: deal.buyerPo ?? null,
-          shipping_terms: deal.shippingTerms ?? group.incoterm,
-          tolerance_pct: deal.tolerancePct ?? 5,
-          insurance_terms: deal.insuranceTerms ?? null,
-          shipment_window: deal.shipmentWindow ?? null,
-          legacy_number: deal.legacyNumber ?? null,
-          notes: deal.notes ?? null,
-          broker_id: ctx.claims.sub,
-        })
-        .select("id, display_number")
-        .single();
-      if (orderError) {
-        if (orderError.code === "23505") {
+      // The columns every leg inherits (TPE convert_matched_order copies these,
+      // plus tolerance/insurance/window which TPE leaves to defaults).
+      const shared = {
+        buyer_company_id: buyer.id,
+        buyer_company_text: buyer.name,
+        product_id: product.id,
+        product_text: product.name,
+        quality: rest.quality ?? "prime",
+        buyer_terms: rest.buyerTerms ?? null,
+        buyer_po: rest.buyerPo ?? null,
+        shipping_terms: rest.shippingTerms ?? incoterm ?? group.incoterm,
+        tpe_buy_price: rest.buyPricePerLb,
+        tpe_sell_price: rest.sellPricePerLb,
+        tolerance_pct: rest.tolerancePct ?? 5,
+        insurance_terms: rest.insuranceTerms ?? null,
+        shipment_window: rest.shipmentWindow ?? null,
+        seller_company_id: exchange?.id ?? null,
+        seller_company_text: exchange?.name ?? "The Plastics Exchange",
+      };
+      const parentOnly = {
+        legacy_number: legacyNumber ?? null,
+        notes: notes ?? null,
+        ...(orderNumber ? { display_number: orderNumber } : {}),
+      };
+      const orderTaken = (e: { code?: string; message: string }): never => {
+        if (e.code === "23505") {
           throw new TRPCError({
             code: "PRECONDITION_FAILED",
-            message: `Order number ${deal.orderNumber} is already taken.`,
+            message: `Order number ${orderNumber} is already taken.`,
           });
         }
-        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: orderError.message });
-      }
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: e.message });
+      };
 
-      try {
-        await assignToGroup(ctx.db, groupId, [order.id]);
-      } catch (err) {
-        await ctx.db.from("matched_orders").delete().eq("id", order.id);
-        throw err;
-      }
-
-      await logEvent(ctx.db, groupId, "containers_assigned", ctx.claims.sub, {
-        count: 1,
-        matchedOrderIds: [order.id],
-        from: "new_deal",
-      });
-      return { matchedOrderId: order.id, displayNumber: order.display_number };
-    }),
-
-  /**
-   * Patch the trade line behind a container. The DB guard only fires when a
-   * container's matched_order_id changes, so the unit rule is enforced here
-   * by the zod enum.
-   */
-  updateDeal: requirePermission("admin:view")
-    .input(
-      z.object({ matchedOrderId: z.string().uuid() }).extend(z.object(dealFields).partial().shape),
-    )
-    .mutation(async ({ ctx, input }) => {
-      const { matchedOrderId, ...deal } = input;
-      const patch: Update<"matched_orders"> = {};
-      if (deal.orderNumber !== undefined) patch.display_number = deal.orderNumber;
-      if (deal.legacyNumber !== undefined) patch.legacy_number = deal.legacyNumber ?? null;
-      if (deal.unit !== undefined) patch.unit = deal.unit;
-      if (deal.qty !== undefined) patch.qty = deal.qty;
-      if (deal.quantityLbs !== undefined) patch.quantity_lbs = deal.quantityLbs;
-      if (deal.sellPricePerLb !== undefined) patch.tpe_sell_price = deal.sellPricePerLb;
-      if (deal.quality !== undefined) patch.quality = deal.quality;
-      if (deal.buyerTerms !== undefined) patch.buyer_terms = deal.buyerTerms ?? null;
-      if (deal.buyerPo !== undefined) patch.buyer_po = deal.buyerPo ?? null;
-      if (deal.shippingTerms !== undefined) patch.shipping_terms = deal.shippingTerms ?? null;
-      if (deal.tolerancePct !== undefined) patch.tolerance_pct = deal.tolerancePct;
-      if (deal.insuranceTerms !== undefined) patch.insurance_terms = deal.insuranceTerms ?? null;
-      if (deal.shipmentWindow !== undefined) patch.shipment_window = deal.shipmentWindow ?? null;
-      if (deal.notes !== undefined) patch.notes = deal.notes ?? null;
-      if (deal.buyerOrgId !== undefined) {
-        const { data: buyer } = await ctx.db
-          .from("organizations")
-          .select("id, name")
-          .eq("id", deal.buyerOrgId)
-          .maybeSingle();
-        if (!buyer) throw new TRPCError({ code: "NOT_FOUND", message: "Buyer not found." });
-        patch.buyer_company_id = buyer.id;
-        patch.buyer_company_text = buyer.name;
-      }
-      if (deal.productId !== undefined) {
-        const { data: product } = await ctx.db
-          .from("products")
-          .select("id, name")
-          .eq("id", deal.productId)
-          .maybeSingle();
-        if (!product) throw new TRPCError({ code: "NOT_FOUND", message: "Product not found." });
-        patch.product_id = product.id;
-        patch.product_text = product.name;
-      }
-      const columns = Object.keys(patch) as (keyof typeof patch)[];
-      if (!columns.length) return { matchedOrderId };
-
-      const { data: before } = await ctx.db
-        .from("matched_orders")
-        .select(
-          "display_number, legacy_number, unit, qty, quantity_lbs, tpe_sell_price, quality, buyer_terms, buyer_po, shipping_terms, tolerance_pct, insurance_terms, shipment_window, notes, buyer_company_id, buyer_company_text, product_id, product_text, shipment_containers(id, shipment_group_id)",
-        )
-        .eq("id", matchedOrderId)
-        .maybeSingle();
-      if (!before) throw new TRPCError({ code: "NOT_FOUND", message: "Deal not found." });
-
-      const { error } = await ctx.db.from("matched_orders").update(patch).eq("id", matchedOrderId);
-      if (error) {
-        if (error.code === "23505") {
+      let parentId = link?.matched_order_id ?? null;
+      if (!parentId) {
+        const { data: parent, error } = await ctx.db
+          .from("matched_orders")
+          .insert({
+            ...shared,
+            ...parentOnly,
+            market: "international",
+            status: "matched",
+            ship_status: "inventory",
+            unit: "container",
+            qty: 1,
+            quantity_lbs: 0,
+            broker_id: ctx.claims.sub,
+          })
+          .select("id")
+          .single();
+        if (error) orderTaken(error);
+        if (!parent)
           throw new TRPCError({
-            code: "PRECONDITION_FAILED",
-            message: `Order number ${deal.orderNumber} is already taken.`,
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Could not create the purchase.",
           });
+        parentId = parent.id;
+        const { error: linkError } = await ctx.db
+          .from("shipment_group_deals")
+          .insert({ shipment_group_id: groupId, matched_order_id: parentId });
+        if (linkError) {
+          await ctx.db.from("matched_orders").delete().eq("id", parentId);
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: linkError.message });
         }
-        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
-      }
+        await logEvent(ctx.db, groupId, "container_updated", ctx.claims.sub, {
+          scope: "deal",
+          created: true,
+          matchedOrderId: parentId,
+        });
+      } else {
+        const { data: before } = await ctx.db
+          .from("matched_orders")
+          .select(
+            "display_number, legacy_number, notes, buyer_company_id, buyer_company_text, product_id, product_text, quality, buyer_terms, buyer_po, shipping_terms, tpe_buy_price, tpe_sell_price, tolerance_pct, insurance_terms, shipment_window",
+          )
+          .eq("id", parentId)
+          .maybeSingle();
+        const { error } = await ctx.db
+          .from("matched_orders")
+          .update({ ...shared, ...parentOnly })
+          .eq("id", parentId);
+        if (error) orderTaken(error);
 
-      const groupId = before.shipment_containers?.shipment_group_id ?? null;
-      if (groupId) {
-        const beforeRec = before as unknown as Record<string, unknown>;
-        const patchRec = patch as Record<string, unknown>;
+        // Push the shared columns down to every leg of this purchase.
+        const { error: legError } = await ctx.db
+          .from("matched_orders")
+          .update(shared)
+          .eq("parent_matched_order_id", parentId);
+        if (legError) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: legError.message });
+        }
+
+        const after = { ...shared, ...parentOnly } as Record<string, unknown>;
+        const beforeRec = (before ?? {}) as Record<string, unknown>;
         const changed = Object.fromEntries(
-          columns
-            .filter((c) => (beforeRec[c] ?? null) !== (patchRec[c] ?? null))
-            .map((c) => [c, { from: beforeRec[c] ?? null, to: patchRec[c] ?? null }]),
+          Object.keys(after)
+            .filter((k) => String(beforeRec[k] ?? "") !== String(after[k] ?? ""))
+            .map((k) => [k, { from: beforeRec[k] ?? null, to: after[k] ?? null }]),
         );
         if (Object.keys(changed).length) {
           await logEvent(ctx.db, groupId, "container_updated", ctx.claims.sub, {
-            containerId: before.shipment_containers?.id ?? null,
-            matchedOrderId,
+            scope: "deal",
+            matchedOrderId: parentId,
             changed,
           });
         }
       }
-      return { matchedOrderId };
+
+      if (incoterm && incoterm !== group.incoterm) {
+        const { error } = await ctx.db
+          .from("shipment_groups")
+          .update({ incoterm })
+          .eq("id", groupId);
+        if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
+      }
+      return { matchedOrderId: parentId };
     }),
 
   /**
-   * Delete a container AND its trade line. Refused while an ISSUED document
-   * covers it: live paperwork cites the box, so void that first. Draft and
-   * voided coverage rows go with it (cascade) — drafts are unissued and a
-   * voided document is dead paper whose frozen payload is unaffected.
+   * Add containers to the manifest: each is a conversion leg of the shipment's
+   * purchase (buyer, product, prices, terms inherited), plus the physical
+   * facts the desk knows up front — unit, contract weight, packaging. Stuffing
+   * detail (container no., seal, net/tare) comes later in the container sheet.
+   */
+  createContainer: requirePermission("admin:view")
+    .input(z.object({ groupId: z.string().uuid() }).extend(containerLegFields))
+    .mutation(async ({ ctx, input }) => {
+      const { groupId, count, unit, packageKind, packageCount, packageWeightLbs, marksAndNumbers } =
+        input;
+      const parent = await purchaseOf(ctx.db, groupId);
+      if (!parent) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "Save the Purchase card before adding containers.",
+        });
+      }
+      const quantityLbs = input.quantityLbs ?? LBS_PER_UNIT[unit];
+
+      const { data: lastLeg } = await ctx.db
+        .from("matched_orders")
+        .select("leg_index")
+        .eq("parent_matched_order_id", parent.id)
+        .order("leg_index", { ascending: false, nullsFirst: false })
+        .limit(1)
+        .maybeSingle();
+      let legIndex = (lastLeg?.leg_index ?? 0) + 1;
+
+      const legRow = {
+        parent_matched_order_id: parent.id,
+        market: "international" as const,
+        status: "matched",
+        ship_status: "inventory" as const,
+        unit,
+        qty: 1,
+        quantity_lbs: quantityLbs,
+        broker_id: parent.broker_id,
+        buyer_company_id: parent.buyer_company_id,
+        buyer_company_text: parent.buyer_company_text,
+        product_id: parent.product_id,
+        product_text: parent.product_text,
+        quality: parent.quality,
+        buyer_terms: parent.buyer_terms,
+        buyer_po: parent.buyer_po,
+        shipping_terms: parent.shipping_terms,
+        tpe_buy_price: parent.tpe_buy_price,
+        tpe_sell_price: parent.tpe_sell_price,
+        tolerance_pct: parent.tolerance_pct,
+        insurance_terms: parent.insurance_terms,
+        shipment_window: parent.shipment_window,
+        seller_company_id: parent.seller_company_id,
+        seller_company_text: parent.seller_company_text,
+      };
+
+      const created: string[] = [];
+      for (let i = 0; i < count; i++) {
+        const { data: leg, error } = await ctx.db
+          .from("matched_orders")
+          .insert({ ...legRow, leg_index: legIndex })
+          .select("id")
+          .single();
+        if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
+        try {
+          await assignToGroup(ctx.db, groupId, [leg.id]);
+        } catch (err) {
+          await ctx.db.from("matched_orders").delete().eq("id", leg.id);
+          throw err;
+        }
+        if (packageKind || packageCount || packageWeightLbs || marksAndNumbers) {
+          await ctx.db
+            .from("shipment_containers")
+            .update({
+              package_kind: packageKind ?? null,
+              package_count: packageKind ? (packageCount ?? null) : null,
+              package_weight_lbs: packageKind ? (packageWeightLbs ?? null) : null,
+              marks_and_numbers: marksAndNumbers ?? null,
+            })
+            .eq("matched_order_id", leg.id);
+        }
+        created.push(leg.id);
+        legIndex += 1;
+      }
+
+      await syncPurchaseTotals(ctx.db, parent.id);
+      await logEvent(ctx.db, groupId, "containers_assigned", ctx.claims.sub, {
+        count,
+        matchedOrderIds: created,
+        from: "purchase",
+      });
+      return { matchedOrderIds: created };
+    }),
+
+  /** Per-container override of the contract line: unit and contract weight. */
+  updateLeg: requirePermission("admin:view")
+    .input(
+      z.object({
+        matchedOrderId: z.string().uuid(),
+        unit: z.enum(CONTAINER_UNITS).optional(),
+        quantityLbs: z.number().positive().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const patch: Update<"matched_orders"> = {};
+      if (input.unit !== undefined) patch.unit = input.unit;
+      if (input.quantityLbs !== undefined) patch.quantity_lbs = input.quantityLbs;
+      if (!Object.keys(patch).length) return { matchedOrderId: input.matchedOrderId };
+
+      const { data: before } = await ctx.db
+        .from("matched_orders")
+        .select(
+          "unit, quantity_lbs, parent_matched_order_id, shipment_containers(id, shipment_group_id)",
+        )
+        .eq("id", input.matchedOrderId)
+        .maybeSingle();
+      if (!before) throw new TRPCError({ code: "NOT_FOUND", message: "Container not found." });
+
+      const { error } = await ctx.db
+        .from("matched_orders")
+        .update(patch)
+        .eq("id", input.matchedOrderId);
+      if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
+
+      if (before.parent_matched_order_id)
+        await syncPurchaseTotals(ctx.db, before.parent_matched_order_id);
+
+      const groupId = before.shipment_containers?.shipment_group_id;
+      if (groupId) {
+        const changed: Record<string, { from: unknown; to: unknown }> = {};
+        if (patch.unit !== undefined && patch.unit !== before.unit)
+          changed.unit = { from: before.unit, to: patch.unit };
+        if (
+          patch.quantity_lbs !== undefined &&
+          Number(patch.quantity_lbs) !== Number(before.quantity_lbs)
+        )
+          changed.quantity_lbs = { from: before.quantity_lbs, to: patch.quantity_lbs };
+        if (Object.keys(changed).length) {
+          await logEvent(ctx.db, groupId, "container_updated", ctx.claims.sub, {
+            containerId: before.shipment_containers?.id ?? null,
+            matchedOrderId: input.matchedOrderId,
+            changed,
+          });
+        }
+      }
+      return { matchedOrderId: input.matchedOrderId };
+    }),
+
+  /**
+   * Delete a container AND its leg. Refused while an ISSUED document covers
+   * it: live paperwork cites the box, so void that first. Draft and voided
+   * coverage rows go with it (cascade).
    */
   deleteContainer: requirePermission("admin:view")
     .input(z.object({ containerId: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
       const { data: row } = await ctx.db
         .from("shipment_containers")
-        .select("id, matched_order_id, shipment_group_id, container_number")
+        .select(
+          "id, matched_order_id, shipment_group_id, container_number, matched_orders(parent_matched_order_id)",
+        )
         .eq("id", input.containerId)
         .maybeSingle();
       if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Container not found." });
@@ -647,6 +835,9 @@ export const exportShipmentsRouter = createTRPCRouter({
       // matched_orders -> shipment_containers is ON DELETE CASCADE.
       const { error } = await ctx.db.from("matched_orders").delete().eq("id", row.matched_order_id);
       if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
+
+      const parentId = row.matched_orders?.parent_matched_order_id;
+      if (parentId) await syncPurchaseTotals(ctx.db, parentId);
 
       if (row.shipment_group_id) {
         await renumber(ctx.db, row.shipment_group_id);
@@ -1247,6 +1438,39 @@ export const exportShipmentsRouter = createTRPCRouter({
 });
 
 /** Append one audit row to a shipment's timeline. */
+/** The shipment's purchase (parent deal), or null before the card is saved. */
+async function purchaseOf(db: ExportShipmentDb, groupId: string) {
+  const { data } = await db
+    .from("shipment_group_deals")
+    .select("matched_order_id")
+    .eq("shipment_group_id", groupId)
+    .maybeSingle();
+  if (!data) return null;
+  const { data: parent } = await db
+    .from("matched_orders")
+    .select(PURCHASE_SELECT)
+    .eq("id", data.matched_order_id)
+    .maybeSingle();
+  return parent ?? null;
+}
+
+/**
+ * Keep the parent's qty / quantity_lbs equal to its legs (count and sum), so
+ * the purchase reads as "3 containers, 133,500 lb" wherever TPE shows a deal.
+ */
+async function syncPurchaseTotals(db: ExportShipmentDb, parentId: string): Promise<void> {
+  const { data: legs } = await db
+    .from("matched_orders")
+    .select("quantity_lbs")
+    .eq("parent_matched_order_id", parentId);
+  const count = legs?.length ?? 0;
+  const lbs = (legs ?? []).reduce((sum, l) => sum + Number(l.quantity_lbs ?? 0), 0);
+  await db
+    .from("matched_orders")
+    .update({ qty: Math.max(1, count), quantity_lbs: lbs })
+    .eq("id", parentId);
+}
+
 async function logEvent(
   db: ExportShipmentDb,
   groupId: string,

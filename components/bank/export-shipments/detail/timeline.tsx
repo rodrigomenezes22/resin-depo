@@ -37,6 +37,15 @@ const fmt = (iso: string) =>
     minute: "2-digit",
   });
 
+/** Event label; deal edits reuse container_updated with a scope marker (REM-03 CHECK). */
+function labelOf(event: ShipmentEventRow): string {
+  const payload = (event.payload ?? {}) as Record<string, unknown>;
+  if (event.event_type === "container_updated" && payload.scope === "deal") {
+    return payload.created ? "Purchase opened" : "Purchase updated";
+  }
+  return EVENT_LABELS[event.event_type] ?? event.event_type;
+}
+
 /** A one-line, human summary of the event's payload. */
 function describe(event: ShipmentEventRow): string | null {
   const payload = (event.payload ?? {}) as Record<string, unknown>;
@@ -74,7 +83,7 @@ export function Timeline({ events }: { events: ShipmentEventRow[] }) {
             <span className="text-muted-foreground w-40 shrink-0 font-mono text-xs">
               {fmt(e.occurred_at)}
             </span>
-            <span className="font-medium">{EVENT_LABELS[e.event_type] ?? e.event_type}</span>
+            <span className="font-medium">{labelOf(e)}</span>
             {detail ? <span className="text-muted-foreground">{detail}</span> : null}
             {who ? <span className="text-muted-foreground text-xs">· {who}</span> : null}
           </li>

@@ -13,13 +13,18 @@ Contract) while the full TPE platform is finished.
 - One foundation migration (`20260101000000_foundation.sql`) creates minimal, TPE-shaped copies of
   the upstream tables the export feature depends on: `user_profiles`, `organizations`,
   `locations` + `organization_locations`, `products`, `matched_orders`, a stub `lots`.
-- **Double entry, once per container.** TPE puts a container on a shipment from its ledger; here
-  the desk types the trade line in the *Add container* drawer (buyer, product, contract weight,
-  price, terms) and it is written as a `matched_orders` row + `shipment_containers` row in one
-  call. Everything downstream (manifest, cost allocation, documents) is TPE's code unchanged.
+- **Double entry, once per shipment.** TPE puts a container on a shipment from its ledger; here
+  the desk fills the **Purchase card** (buyer, product, prices, terms) once per shipment. It is
+  stored as a parent `matched_orders` row, linked by `shipment_group_deals`, and every container
+  added afterwards is a *conversion leg* of it (`parent_matched_order_id`, `leg_index`, printed
+  as `900001-CH2`) — exactly what TPE's `convert_matched_order` produces. Saving the Purchase
+  again pushes the shared fields down to the legs. Everything downstream (manifest, cost
+  allocation, documents) is TPE's code unchanged.
 - **Import contract.** When TPE goes live, this database imports as a row copy. Numbering is
   offset so nothing collides: shipments start at `SHP-90000`, order lines at `900000`. Paper
   references from the team's existing process go in `matched_orders.legacy_number`.
+  `shipment_group_deals` is resin-depo-only — drop it on import; the legs already carry
+  `parent_matched_order_id`.
 - Every user is `admin` (`user_profiles.platform_role` default). TPE's RLS policies are kept as-is.
 
 ## Stack

@@ -529,7 +529,6 @@ function PreviewDialog({
 
         <div className="bg-muted/30 h-[70vh] overflow-auto rounded-lg border">
           {file.content_type.startsWith("image/") ? (
-             
             // short-lived storage URL cannot be optimised by next/image.
             <img src={url} alt={file.file_name} className="mx-auto max-w-full" />
           ) : (

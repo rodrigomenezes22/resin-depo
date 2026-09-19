@@ -19,6 +19,7 @@ import { ArrowLeft, History } from "lucide-react";
 import { FORM_PAGE_WIDTH } from "@/components/dashboard/page-width";
 import { cn } from "@/lib/utils";
 import { Booking } from "@/components/bank/export-shipments/detail/booking";
+import { Purchase } from "@/components/bank/export-shipments/detail/purchase";
 import { Costs } from "@/components/bank/export-shipments/detail/costs";
 import { Documents } from "@/components/bank/export-shipments/detail/documents";
 import { ShipmentFiles } from "@/components/bank/shipment-files";
@@ -104,7 +105,10 @@ export function ShipmentDetail({ id }: { id: string }) {
         </div>
       </div>
 
-      <Booking group={group} onSaved={refresh} />
+      <Purchase key={group.deal?.id ?? "none"} group={group} onSaved={refresh} />
+      {/* Keyed on the incoterm: the Purchase card can change it, and Booking
+          holds its own form state from mount (TPE design). */}
+      <Booking key={`booking-${group.incoterm}`} group={group} onSaved={refresh} />
 
       {/* Every section but the Timeline renders its own Section — each needs the
           header action slot for its save / add button. */}

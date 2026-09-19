@@ -212,6 +212,8 @@ export const referenceRouter = createTRPCRouter({
         if (input?.roles?.length) q = q.in("role", input.roles);
         if (!input?.includeDeactivated) q = q.is("deactivated_at", null);
         if (input?.search) q = q.ilike("name", `%${input.search}%`);
+        // Count purchases (parent deals), not their container legs.
+        q = q.is("deals.parent_matched_order_id", null);
         const { data, error } = await q;
         if (error) dbFail(error, "Parties");
         return (data ?? []).map(({ links, deals, ...org }) => {
@@ -221,7 +223,7 @@ export const referenceRouter = createTRPCRouter({
             city: hq?.city ?? null,
             state: hq?.state ?? null,
             country: hq?.country ?? null,
-            // PostgREST count embed: [{ count: n }]. Containers sold to this party.
+            // PostgREST count embed: [{ count: n }]. Purchases (parent deals) for this party.
             deal_count: deals?.[0]?.count ?? 0,
           };
         });

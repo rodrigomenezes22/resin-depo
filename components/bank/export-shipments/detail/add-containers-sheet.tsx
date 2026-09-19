@@ -39,8 +39,11 @@ export function AddContainersSheet({
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
+  // resin-depo: only legs of THIS shipment's purchase that were removed from
+  // the manifest are offered back.
   const candidates = ClientAPI.exportShipments.groupable.useQuery({
     search: search || undefined,
+    groupId,
   });
   const assign = ClientAPI.exportShipments.assignContainers.useMutation({ onSuccess: onSaved });
 

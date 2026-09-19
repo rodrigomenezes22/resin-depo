@@ -4,8 +4,8 @@
 // Manifest — the containers on a shipment
 // =============================================================================
 // One row per container. In TPE the order number links back to the ledger
-// Transaction; resin-depo has no ledger, so it opens the DealSheet (the trade
-// line) instead, and "Add container" creates deal + container in one go.
+// Transaction; resin-depo has no ledger — the deal is the Purchase card above,
+// every container is one of its legs, and "Add containers" mints more legs.
 // Editing opens a sheet rather than putting eleven inputs inline: a manifest
 // row is scanned far more often than it is edited.
 //
@@ -21,7 +21,7 @@ import { toast } from "sonner";
 import { Section } from "@/components/bank/chrome";
 import { AddContainersSheet } from "@/components/bank/export-shipments/detail/add-containers-sheet";
 import { ContainerSheet } from "@/components/bank/export-shipments/detail/container-sheet";
-import { DealSheet } from "@/components/bank/export-shipments/detail/deal-sheet";
+import { AddContainerSheet } from "@/components/bank/export-shipments/detail/add-container-sheet";
 import { formatPackages } from "@/components/bank/export-shipments/package-kinds";
 import type {
   ShipmentContainerRow,
@@ -46,7 +46,7 @@ const mt = (n: number | string | null) =>
 
 export function Manifest({ group, onSaved }: { group: ShipmentGroupRow; onSaved: () => void }) {
   const [editing, setEditing] = useState<ShipmentContainerRow | null>(null);
-  const [deal, setDeal] = useState<ShipmentContainerRow | "new" | null>(null);
+  const [minting, setMinting] = useState(false);
   const [adding, setAdding] = useState(false);
 
   const remove = ClientAPI.exportShipments.removeContainer.useMutation({ onSuccess: onSaved });
@@ -65,9 +65,9 @@ export function Manifest({ group, onSaved }: { group: ShipmentGroupRow; onSaved:
         c.matched_orders ? (
           <button
             type="button"
-            onClick={() => setDeal(c)}
+            onClick={() => setEditing(c)}
             className="text-table-link font-medium hover:underline"
-            aria-label={`Edit deal for container ${c.position}`}
+            aria-label={`Open container ${c.position}`}
           >
             {/* Containers on a booking are very often conversion legs, so this
                 is exactly where a shared parent number has to show through. */}
@@ -215,9 +215,15 @@ export function Manifest({ group, onSaved }: { group: ShipmentGroupRow; onSaved:
             <ListPlus className="size-4" />
             Add existing
           </Button>
-          <Button variant="gold" size="sm" onClick={() => setDeal("new")}>
+          <Button
+            variant="gold"
+            size="sm"
+            onClick={() => setMinting(true)}
+            disabled={!group.deal}
+            title={group.deal ? undefined : "Save the Purchase card first"}
+          >
             <Plus className="size-4" />
-            Add container
+            Add containers
           </Button>
         </div>
       }
@@ -229,7 +235,11 @@ export function Manifest({ group, onSaved }: { group: ShipmentGroupRow; onSaved:
         totals={
           group.containers.length ? columns.map((c) => totalsByKey[c.key] ?? null) : undefined
         }
-        emptyMessage="No containers on this shipment yet. Add a container (buyer, product, contract weight, price) to start the manifest."
+        emptyMessage={
+          group.deal
+            ? "No containers yet. Add containers — each inherits the Purchase above."
+            : "Save the Purchase card first, then add containers."
+        }
       />
 
       {editing ? (
@@ -243,13 +253,12 @@ export function Manifest({ group, onSaved }: { group: ShipmentGroupRow; onSaved:
         />
       ) : null}
 
-      {deal ? (
-        <DealSheet
-          group={group}
-          container={deal === "new" ? null : deal}
-          onClose={() => setDeal(null)}
+      {minting ? (
+        <AddContainerSheet
+          groupId={group.id}
+          onClose={() => setMinting(false)}
           onSaved={() => {
-            setDeal(null);
+            setMinting(false);
             onSaved();
           }}
         />

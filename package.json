@@ -16,7 +16,7 @@
     "supabase:push": "supabase db push",
     "supabase:push:dry": "supabase db push --dry-run",
     "supabase:types": "supabase gen types typescript --linked --schema public > lib/supabase/database.types.ts",
-    "supabase:types:local": "supabase gen types typescript --local --schema public > lib/supabase/database.types.ts",
+    "supabase:types:local": "supabase gen types typescript --db-url postgresql://postgres:postgres@127.0.0.1:54322/postgres --schema public > lib/supabase/database.types.ts",
     "supabase:migrate:new": "supabase migration new"
   },
   "dependencies": {

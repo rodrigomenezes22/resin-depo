@@ -32,8 +32,9 @@
 // =============================================================================
 
 import { useState } from "react";
+import { toast } from "sonner";
 
-import { Cell, Grid, ReadValue } from "@/components/bank/chrome";
+import { Cell, Grid, SELECT_POPUP, SELECT_TRIGGER } from "@/components/bank/chrome";
 import {
   PACKAGE_KINDS,
   PACKAGE_STUFFING_LBS,
@@ -60,7 +61,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
-import { kilogramsToLbs, lbsToKilograms } from "@/lib/units";
+import { kilogramsToLbs, lbsToKilograms, UNIT_LABELS, type OrderUnit } from "@/lib/units";
 import { cn } from "@/lib/utils";
 import { ClientAPI } from "@/trpc/client";
 
@@ -93,6 +94,15 @@ function fromLbs(lbs: number | null | undefined, unit: WeightUnit): string {
   if (lbs == null) return "";
   return tidy(unit === "kg" ? lbsToKilograms(lbs) : lbs);
 }
+
+/** Units a container leg may carry — mirrors CONTAINER_UNITS in the router. */
+const LEG_UNITS = [
+  "container",
+  "heavy_container",
+  "container_20",
+  "container_40",
+  "container_40hc",
+] as const;
 
 export function ContainerSheet({
   container,
@@ -161,6 +171,15 @@ export function ContainerSheet({
     stuffingLbs && stuffingLbs > 0 ? stuffingLbs : (PACKAGE_STUFFING_LBS[packageKind] ?? null);
 
   const update = ClientAPI.exportShipments.updateContainer.useMutation({ onSuccess: onSaved });
+
+  // resin-depo: the contract line (leg unit + contract weight) is editable here
+  // too — TPE reads it from the ledger. Saved through updateLeg alongside the
+  // stuffing patch; the parent purchase totals follow.
+  const updateLeg = ClientAPI.exportShipments.updateLeg.useMutation();
+  const [contractInput, setContractInput] = useState(
+    contractLbs == null ? "" : String(contractLbs),
+  );
+  const [legUnit, setLegUnit] = useState<string>(container.matched_orders?.unit ?? "container");
 
   const num = (v: string) => (v.trim() === "" ? 0 : Number(v) || 0);
 
@@ -362,12 +381,30 @@ export function ContainerSheet({
               </Cell>
             </Grid>
 
-            <Cell label={`Contract weight ${suffix}`} span={6}>
-              <ReadValue>
-                {contractLbs == null
-                  ? null
-                  : Number(fromLbs(contractLbs, unit)).toLocaleString("en-US")}
-              </ReadValue>
+            <Cell label="Container unit" span={3}>
+              <Select value={legUnit} onValueChange={(v) => v && setLegUnit(v)}>
+                <SelectTrigger className={SELECT_TRIGGER} aria-label="Container unit">
+                  <SelectValue>{UNIT_LABELS[legUnit as OrderUnit] ?? legUnit}</SelectValue>
+                </SelectTrigger>
+                <SelectContent className={SELECT_POPUP}>
+                  {LEG_UNITS.map((u) => (
+                    <SelectItem key={u} value={u}>
+                      {UNIT_LABELS[u]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Cell>
+            <Cell label="Contract weight (lbs)" span={3} htmlFor="c-contract">
+              <Input
+                id="c-contract"
+                type="number"
+                min={0}
+                step="1"
+                className="h-8"
+                value={contractInput}
+                onChange={(e) => setContractInput(e.target.value)}
+              />
             </Cell>
             <Cell label={`Net weight ${suffix}`} span={6} htmlFor="c-net">
               <Input
@@ -417,8 +454,28 @@ export function ContainerSheet({
           <Button
             variant="blue"
             size="sm"
-            disabled={update.isPending}
-            onClick={() =>
+            disabled={update.isPending || updateLeg.isPending}
+            onClick={async () => {
+              const legId = container.matched_orders?.id;
+              const nextLbs = contractInput.trim() === "" ? null : Number(contractInput);
+              const legChanged =
+                legId &&
+                ((nextLbs != null && nextLbs > 0 && nextLbs !== contractLbs) ||
+                  legUnit !== container.matched_orders?.unit);
+              if (legChanged) {
+                try {
+                  await updateLeg.mutateAsync({
+                    matchedOrderId: legId,
+                    unit: legUnit as (typeof LEG_UNITS)[number],
+                    quantityLbs: nextLbs != null && nextLbs > 0 ? nextLbs : undefined,
+                  });
+                } catch (e) {
+                  toast.error(
+                    e instanceof Error ? e.message : "Could not update the contract line.",
+                  );
+                  return;
+                }
+              }
               update.mutate({
                 id: container.id,
                 containerNumber: orNull(containerNumber),
@@ -432,10 +489,10 @@ export function ContainerSheet({
                 netWeightLbs: toLbs(netWeight, unit),
                 tareWeightLbs: toLbs(tareWeight, unit),
                 marksAndNumbers: orNull(marks),
-              })
-            }
+              });
+            }}
           >
-            {update.isPending ? "Saving…" : "Update Container"}
+            {update.isPending || updateLeg.isPending ? "Saving…" : "Update Container"}
           </Button>
         </SheetFooter>
       </SheetContent>
