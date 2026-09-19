@@ -58,11 +58,52 @@ export function ShipmentDetail({ id }: { id: string }) {
     );
   }
 
+  const d = group.deal;
+  const purchaseKey = JSON.stringify([
+    d?.id,
+    d?.buyer_po,
+    d?.buyer_terms,
+    d?.shipping_terms,
+    d?.tolerance_pct,
+    d?.insurance_terms,
+    d?.shipment_window,
+    d?.tpe_sell_price,
+    d?.tpe_buy_price,
+    group.incoterm,
+  ]);
+  const bookingKey = JSON.stringify([
+    group.incoterm,
+    group.vessel_name,
+    group.voyage_number,
+    group.booking_number,
+    group.hbl_number,
+    group.master_bl_number,
+    group.etd,
+    group.eta,
+    group.pol_location_id,
+    group.pod_location_id,
+    group.place_of_receipt,
+    group.place_of_delivery,
+    group.carrier_org_id,
+    group.aes_itn,
+    group.forwarding_agent,
+    group.fmc_number,
+    group.loading_terminal,
+    group.type_of_move,
+    group.final_destination,
+    group.freight_terms,
+    group.dthc_terms,
+  ]);
+
   // Every card saves through this: the manifest and the credit views (what is
   // owed, available credit) both move when the purchase, containers, documents
   // or payments change.
   const refresh = () => {
     void query.refetch();
+    // Drafts are re-derived server-side on every shipment save; drop the
+    // cached document list and derivations so the next open reads them fresh.
+    void utils.exportShipments.documents.invalidate();
+    void utils.exportShipments.documentDraft.invalidate();
     void utils.credit.invalidate();
   };
 
@@ -113,10 +154,14 @@ export function ShipmentDetail({ id }: { id: string }) {
         </div>
       </div>
 
-      <Purchase key={group.deal?.id ?? "none"} group={group} onSaved={refresh} />
+      {/* Both cards hold their own form state from mount (TPE design). They are
+          keyed on the shipment-owned fields a document save can write back
+          (vessel, ports, terms…), so a write-back re-seeds them; unrelated
+          refetches (a new container) leave in-progress typing alone. */}
+      <Purchase key={purchaseKey} group={group} onSaved={refresh} />
       {/* Keyed on the incoterm: the Purchase card can change it, and Booking
           holds its own form state from mount (TPE design). */}
-      <Booking key={`booking-${group.incoterm}`} group={group} onSaved={refresh} />
+      <Booking key={bookingKey} group={group} onSaved={refresh} />
 
       {/* Every section but the Timeline renders its own Section — each needs the
           header action slot for its save / add button. */}

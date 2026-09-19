@@ -22,6 +22,7 @@ import { resolveOrgAddress } from "@/lib/locations/queries";
 import type { ResolvedOrgAddress } from "@/lib/locations/types";
 import { createClient } from "@/lib/supabase/server";
 import type { Database, Json } from "@/lib/supabase/database.types";
+import { mergeLiveIntoDraft, sharedWriteBack } from "@/lib/export-shipment/documents/shared-fields";
 import { formatShipmentNumber } from "@/components/bank/export-shipments/group-status";
 import { creatableGroupStatusSchema } from "@/components/bank/export-shipments/group-statuses";
 import { createTRPCRouter, requirePermission } from "../init";
@@ -653,6 +654,7 @@ export const exportShipmentsRouter = createTRPCRouter({
           .eq("id", groupId);
         if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
       }
+      await resyncDrafts(ctx.db, groupId);
       return { matchedOrderId: parentId };
     }),
 
@@ -688,6 +690,7 @@ export const exportShipmentsRouter = createTRPCRouter({
         matchedOrderIds: created,
         from: "purchase",
       });
+      await resyncDrafts(ctx.db, groupId);
       return { matchedOrderIds: created };
     }),
 
@@ -740,6 +743,7 @@ export const exportShipmentsRouter = createTRPCRouter({
         from: "duplicate",
         sourceContainerId: src.id,
       });
+      await resyncDrafts(ctx.db, src.shipment_group_id);
       return { matchedOrderIds: created };
     }),
 
@@ -794,6 +798,7 @@ export const exportShipmentsRouter = createTRPCRouter({
           });
         }
       }
+      if (groupId) await resyncDrafts(ctx.db, groupId);
       return { matchedOrderId: input.matchedOrderId };
     }),
 
@@ -841,6 +846,7 @@ export const exportShipmentsRouter = createTRPCRouter({
           containerNumber: row.container_number,
           deleted: true,
         });
+        await resyncDrafts(ctx.db, row.shipment_group_id);
       }
       return { groupId: row.shipment_group_id };
     }),
@@ -869,6 +875,7 @@ export const exportShipmentsRouter = createTRPCRouter({
         .update(patch as Update<"shipment_groups">)
         .eq("id", id);
       if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
+      await resyncDrafts(ctx.db, id);
 
       if (previousStatus && previousStatus !== patch.status) {
         await ctx.db.from("shipment_group_events").insert({
@@ -897,6 +904,7 @@ export const exportShipmentsRouter = createTRPCRouter({
     )
     .mutation(async ({ ctx, input }) => {
       await assignToGroup(ctx.db, input.groupId, input.matchedOrderIds);
+      await resyncDrafts(ctx.db, input.groupId);
       await ctx.db.from("shipment_group_events").insert({
         shipment_group_id: input.groupId,
         event_type: "containers_assigned",
@@ -931,6 +939,7 @@ export const exportShipmentsRouter = createTRPCRouter({
       if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
 
       await renumber(ctx.db, groupId);
+      await resyncDrafts(ctx.db, groupId);
       await ctx.db.from("shipment_group_events").insert({
         shipment_group_id: groupId,
         event_type: "containers_removed",
@@ -975,6 +984,7 @@ export const exportShipmentsRouter = createTRPCRouter({
 
       const groupId = before?.shipment_group_id as string | null | undefined;
       if (groupId) {
+        await resyncDrafts(ctx.db, groupId);
         const changed = Object.fromEntries(
           columns
             .filter((c) => (before?.[c] ?? null) !== (patch[c] ?? null))
@@ -1265,6 +1275,17 @@ export const exportShipmentsRouter = createTRPCRouter({
         docType: input.docType,
         containers: input.containerIds.length,
       });
+
+      // Shared fields typed here belong to the shipment: push them home and
+      // bring every other draft in line.
+      await applySharedWriteBack(
+        ctx.db,
+        input.groupId,
+        input.docType,
+        input.payload,
+        input.containerIds,
+      );
+      await resyncDrafts(ctx.db, input.groupId);
       return { id: doc.id, documentNumber: doc.document_number };
     }),
 
@@ -1282,6 +1303,15 @@ export const exportShipmentsRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      const { data: doc } = await ctx.db
+        .from("shipment_documents")
+        .select(
+          "id, shipment_group_id, doc_type, status, shipment_document_containers(container_id)",
+        )
+        .eq("id", input.id)
+        .maybeSingle();
+      if (!doc) throw new TRPCError({ code: "NOT_FOUND", message: "Document not found." });
+
       if (input.payload) {
         const { error } = await ctx.db
           .from("shipment_documents")
@@ -1306,6 +1336,23 @@ export const exportShipmentsRouter = createTRPCRouter({
           );
         if (insError) throw shipmentError(insError.message);
       }
+
+      // Shared fields (vessel, booking #, terms, HS code…) live on the shipment:
+      // write the edit home and re-derive the other drafts. Works for issued
+      // documents too — their allowlisted references (HBL, vessel, voyage,
+      // booking #) are shared keys.
+      if (input.payload) {
+        const ids =
+          input.containerIds ?? (doc.shipment_document_containers ?? []).map((c) => c.container_id);
+        await applySharedWriteBack(
+          ctx.db,
+          doc.shipment_group_id,
+          doc.doc_type,
+          input.payload,
+          ids.length ? ids : null,
+        );
+      }
+      await resyncDrafts(ctx.db, doc.shipment_group_id);
 
       return { id: input.id };
     }),
@@ -1647,6 +1694,97 @@ function partyFromOrg<T extends { name: string; phone: string | null; email: str
  * database — and so two documents built from one shipment cannot derive the
  * same fact differently.
  */
+/**
+ * resin-depo: shared fields have one home. After a document is saved, any
+ * shared key that differs from the live derivation is written back to the
+ * shipment (Booking), the purchase (parent + legs — the context reads terms
+ * off the legs) or the product. Returns true when something changed.
+ */
+async function applySharedWriteBack(
+  db: ExportShipmentDb,
+  groupId: string,
+  docType: ShipmentDocType,
+  payload: Record<string, unknown>,
+  containerIds: string[] | null,
+): Promise<boolean> {
+  if (!isBuiltDocType(docType)) return false;
+  const fresh = (await buildDraftPayload(db, groupId, docType, containerIds)) as Record<
+    string,
+    unknown
+  >;
+  const patch = sharedWriteBack(payload, fresh);
+  let touched = false;
+
+  if (Object.keys(patch.shipment_groups).length) {
+    const { error } = await db
+      .from("shipment_groups")
+      .update(patch.shipment_groups as Update<"shipment_groups">)
+      .eq("id", groupId);
+    if (error) throw shipmentError(error.message);
+    touched = true;
+  }
+
+  if (Object.keys(patch.purchase).length || Object.keys(patch.products).length) {
+    const parent = await purchaseOf(db, groupId);
+    if (parent) {
+      if (Object.keys(patch.purchase).length) {
+        const legPatch = patch.purchase as Update<"matched_orders">;
+        const { error } = await db.from("matched_orders").update(legPatch).eq("id", parent.id);
+        if (error) throw shipmentError(error.message);
+        const { error: legError } = await db
+          .from("matched_orders")
+          .update(legPatch)
+          .eq("parent_matched_order_id", parent.id);
+        if (legError) throw shipmentError(legError.message);
+        touched = true;
+      }
+      if (Object.keys(patch.products).length && parent.product_id) {
+        const { error } = await db
+          .from("products")
+          .update(patch.products as Update<"products">)
+          .eq("id", parent.product_id);
+        if (error) throw shipmentError(error.message);
+        touched = true;
+      }
+    }
+  }
+  return touched;
+}
+
+/**
+ * Re-derive every DRAFT document on a shipment so its stored payload — which
+ * is what the PDF route renders — agrees with the shipment. Document-local
+ * keys are kept (mergeLiveIntoDraft). Issued documents are never touched.
+ */
+async function resyncDrafts(db: ExportShipmentDb, groupId: string): Promise<number> {
+  const { data: drafts } = await db
+    .from("shipment_documents")
+    .select("id, doc_type, payload, shipment_document_containers(container_id)")
+    .eq("shipment_group_id", groupId)
+    .eq("status", "draft");
+  let changed = 0;
+  for (const d of drafts ?? []) {
+    if (!isBuiltDocType(d.doc_type)) continue;
+    const ids = (d.shipment_document_containers ?? []).map((c) => c.container_id);
+    const fresh = (await buildDraftPayload(
+      db,
+      groupId,
+      d.doc_type,
+      ids.length ? ids : null,
+    )) as Record<string, unknown>;
+    const stored = (d.payload ?? {}) as Record<string, unknown>;
+    const merged = mergeLiveIntoDraft(stored, fresh);
+    if (JSON.stringify(merged) === JSON.stringify(stored)) continue;
+    const { error } = await db
+      .from("shipment_documents")
+      .update({ payload: asJson(merged) })
+      .eq("id", d.id);
+    if (error) throw shipmentError(error.message);
+    changed += 1;
+  }
+  return changed;
+}
+
 async function buildDraftPayload(
   db: ExportShipmentDb,
   groupId: string,

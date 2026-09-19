@@ -62,6 +62,18 @@ container drawer.
 | `pnpm supabase:migrate:new <slug>` | new migration file |
 | `pnpm admin:seed [email] [password]` | create / reset a confirmed user via the Admin API |
 
+## Shared fields between the shipment and its documents
+
+A fact that lives on the shipment (Booking: vessel, voyage, booking/HBL numbers, ETD/ETA, ports,
+carrier, filing boxes · Purchase: PO, payment terms, tolerance, insurance, window · Product: HS
+code, origin) has one home. Every **draft** document reads it live, and saving a document that
+changed one of those fields writes it back home and re-derives every other draft on the shipment
+(`lib/export-shipment/documents/shared-fields.ts`, `resyncDrafts` in the export router). Fields
+backed by a picker (ports, carrier, incoterm, party blocks, bank) are shown live but edited on
+the shipment. Document-only fields (dates, description wording, marks, notify party, a hand-set
+payment due) stay per document. Issued documents remain frozen except for their allowlisted
+references, which still write back.
+
 ## Customer credit
 
 Per buyer: **credit limit** (max they may owe), **exposure** (Σ balances of open shipments, counted

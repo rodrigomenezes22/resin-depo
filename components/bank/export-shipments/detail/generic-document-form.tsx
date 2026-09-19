@@ -30,6 +30,7 @@ import type {
 import { Input } from "@/components/ui/input";
 import { DocumentEditorShell } from "@/components/bank/export-shipments/detail/document-editor-shell";
 import { isFieldEditable } from "@/lib/export-shipment/documents/editable";
+import { isEditedOnShipment } from "@/lib/export-shipment/documents/shared-fields";
 import { Textarea } from "@/components/ui/textarea";
 import {
   DOC_TYPE_META,
@@ -220,7 +221,8 @@ export function GenericDocumentForm({
   });
   const [previewVersion, setPreviewVersion] = useState(0);
   const isLockedKey = (key: string) =>
-    live.status === "draft" ? locked(key) : !isFieldEditable(key, docType, live.status);
+    isEditedOnShipment(key) ||
+    (live.status === "draft" ? locked(key) : !isFieldEditable(key, docType, live.status));
   const isLocked = isLockedKey;
 
   const create = ClientAPI.exportShipments.createDocument.useMutation();
@@ -349,7 +351,13 @@ export function GenericDocumentForm({
           className="h-8"
           value={str(spec.key)}
           disabled={isLocked}
-          title={isLocked ? "Frozen once the document is issued" : undefined}
+          title={
+            isEditedOnShipment(spec.key)
+              ? "Shipment data — edit it on the Booking or Purchase card; every document follows"
+              : isLocked
+                ? "Frozen once the document is issued"
+                : undefined
+          }
           onChange={(e) =>
             set(
               spec.key,

@@ -42,6 +42,11 @@ import {
 } from "@/components/bank/export-shipments/detail/generic-document-form";
 import { SalesContractSheetForm } from "@/components/bank/export-shipments/detail/sales-contract-form";
 import { isFieldEditable } from "@/lib/export-shipment/documents/editable";
+import {
+  isEditedOnShipment,
+  mergeLiveIntoDraft,
+} from "@/lib/export-shipment/documents/shared-fields";
+
 import { sumInvoiceLines, roundKg, roundMoney } from "@/lib/export-shipment/documents/totals";
 import type { InvoiceLine } from "@/lib/export-shipment/documents/types";
 import {
@@ -89,18 +94,37 @@ export function DocumentSheet({
   // drawer was still printing the snapshot. Issued and void documents keep
   // their frozen lines: that IS what the document says.
   const isDraftDoc = !isEdit || status === "draft";
+  // Fetched fresh every time the editor opens — a cached derivation from an
+  // earlier open would still show the ports as they were then. No refocus
+  // refetch: the form is seeded once and must not be torn down mid-edit.
+  const [openedAt] = useState(() => Date.now());
   const draftQuery = ClientAPI.exportShipments.documentDraft.useQuery(
     { groupId: group.id, docType },
-    { enabled: isDraftDoc },
+    { enabled: isDraftDoc, staleTime: 0, refetchOnMount: "always", refetchOnWindowFocus: false },
   );
+  const liveIsCurrent = draftQuery.dataUpdatedAt >= openedAt;
 
-  const source = (document?.payload ?? draftQuery.data) as CommercialInvoiceFields | undefined;
+  // resin-depo: a DRAFT opens on its stored payload with every shipment-owned
+  // key (booking, terms, HS code, ports, lines) replaced by the live value —
+  // the shipment is the home of those facts. Issued documents stay frozen.
+  const source = (
+    document && isDraftDoc && draftQuery.data && liveIsCurrent
+      ? mergeLiveIntoDraft(
+          document.payload as Record<string, unknown>,
+          draftQuery.data as Record<string, unknown>,
+        )
+      : (document?.payload ?? draftQuery.data)
+  ) as CommercialInvoiceFields | undefined;
   // Live container rows for a draft; the payload's own for anything issued.
   const liveLines = (draftQuery.data as CommercialInvoiceFields | undefined)?.lines;
   const lines =
     (isDraftDoc && liveLines ? liveLines : source?.lines) ?? linesFromContainers(group.containers);
 
-  if (!source) {
+  // A draft must not mount its form on the stored payload while the live
+  // derivation is still loading: form state is seeded once, and it would keep
+  // the stale ports/vessel until the dialog is reopened.
+  const waitingForLive = isDraftDoc && !liveIsCurrent && !draftQuery.isError;
+  if (!source || waitingForLive) {
     return (
       <DocumentEditorLoading
         title={DOC_TYPE_META[docType].label}
@@ -239,7 +263,8 @@ function DocumentSheetForm({
   });
   const [previewVersion, setPreviewVersion] = useState(0);
   const isLockedKey = (key: string) =>
-    live.status === "draft" ? locked(key) : !isFieldEditable(key, docType, live.status);
+    isEditedOnShipment(key) ||
+    (live.status === "draft" ? locked(key) : !isFieldEditable(key, docType, live.status));
 
   const create = ClientAPI.exportShipments.createDocument.useMutation();
   const update = ClientAPI.exportShipments.updateDocument.useMutation();
@@ -360,7 +385,13 @@ function DocumentSheetForm({
           className="h-8"
           value={value}
           disabled={isLocked}
-          title={isLocked ? "Frozen once the document is issued" : undefined}
+          title={
+            isEditedOnShipment(key)
+              ? "Shipment data — edit it on the Booking or Purchase card; every document follows"
+              : isLocked
+                ? "Frozen once the document is issued"
+                : undefined
+          }
           onChange={(e) => onChange(e.target.value)}
         />
       </Cell>

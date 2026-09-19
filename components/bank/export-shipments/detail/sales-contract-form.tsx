@@ -29,6 +29,7 @@ import type {
 import { Input } from "@/components/ui/input";
 import { DocumentEditorShell } from "@/components/bank/export-shipments/detail/document-editor-shell";
 import { isFieldEditable } from "@/lib/export-shipment/documents/editable";
+import { isEditedOnShipment } from "@/lib/export-shipment/documents/shared-fields";
 import { Textarea } from "@/components/ui/textarea";
 import { roundMoney, roundMt } from "@/lib/export-shipment/documents/totals";
 import {
@@ -133,7 +134,13 @@ export function SalesContractFields_({
           className="h-8"
           value={value}
           disabled={isLocked}
-          title={isLocked ? "Frozen once the document is issued" : undefined}
+          title={
+            isEditedOnShipment(key)
+              ? "Shipment data — edit it on the Booking or Purchase card; every document follows"
+              : isLocked
+                ? "Frozen once the document is issued"
+                : undefined
+          }
           onChange={(e) => onChange(e.target.value)}
         />
       </Cell>
@@ -322,7 +329,8 @@ export function SalesContractSheetForm({
   });
   const [previewVersion, setPreviewVersion] = useState(0);
   const isLocked = (key: string) =>
-    live.status === "draft" ? locked(key) : !isFieldEditable(key, "sales_contract", live.status);
+    isEditedOnShipment(key) ||
+    (live.status === "draft" ? locked(key) : !isFieldEditable(key, "sales_contract", live.status));
 
   const create = ClientAPI.exportShipments.createDocument.useMutation();
   const update = ClientAPI.exportShipments.updateDocument.useMutation();
