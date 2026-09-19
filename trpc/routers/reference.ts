@@ -177,7 +177,7 @@ async function orgWithAddress(db: DB, orgId: string) {
   const { data: org, error } = await db
     .from("organizations")
     .select(
-      "id, name, role, service_kind, phone, email, tax_id, eori, contact_name, payment_terms_days, deactivated_at, created_at",
+      "id, name, role, service_kind, phone, email, tax_id, eori, contact_name, payment_terms_days, credit_limit, deactivated_at, created_at",
     )
     .eq("id", orgId)
     .single();
@@ -214,12 +214,20 @@ export const referenceRouter = createTRPCRouter({
         if (input?.search) q = q.ilike("name", `%${input.search}%`);
         // Count purchases (parent deals), not their container legs.
         q = q.is("deals.parent_matched_order_id", null);
-        const { data, error } = await q;
+        const [{ data, error }, { data: creditRows }] = await Promise.all([
+          q,
+          ctx.db.from("buyer_credit").select("organization_id, credit_limit, exposure, available"),
+        ]);
         if (error) dbFail(error, "Parties");
+        const credit = new Map((creditRows ?? []).map((c) => [c.organization_id, c]));
         return (data ?? []).map(({ links, deals, ...org }) => {
           const hq = links.find((l) => l.role === "headquarters")?.locations ?? null;
+          const c = credit.get(org.id);
           return {
             ...org,
+            credit_limit: Number(c?.credit_limit ?? 0),
+            exposure: Number(c?.exposure ?? 0),
+            available: Number(c?.available ?? 0),
             city: hq?.city ?? null,
             state: hq?.state ?? null,
             country: hq?.country ?? null,

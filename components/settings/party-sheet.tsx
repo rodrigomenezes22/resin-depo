@@ -76,6 +76,9 @@ export function PartySheet({
   const [taxId, setTaxId] = useState(party?.tax_id ?? "");
   const [eori, setEori] = useState(party?.eori ?? "");
   const [terms, setTerms] = useState(String(party?.payment_terms_days ?? 30));
+  const [creditLimit, setCreditLimit] = useState(
+    party?.credit_limit == null ? "" : String(Number(party.credit_limit)),
+  );
   const [line1, setLine1] = useState(party?.address?.addressLine1 ?? "");
   const [line2, setLine2] = useState(party?.address?.addressLine2 ?? "");
   const [city, setCity] = useState(party?.address?.city ?? "");
@@ -85,7 +88,8 @@ export function PartySheet({
 
   const create = ClientAPI.reference.parties.create.useMutation();
   const update = ClientAPI.reference.parties.update.useMutation();
-  const pending = create.isPending || update.isPending;
+  const setLimit = ClientAPI.credit.setCreditLimit.useMutation();
+  const pending = create.isPending || update.isPending || setLimit.isPending;
 
   async function save() {
     if (!name.trim()) {
@@ -109,6 +113,15 @@ export function PartySheet({
       const saved = party
         ? await update.mutateAsync({ id: party.id, ...fields })
         : await create.mutateAsync(fields);
+      // Credit limit goes through the audited path, not the org patch.
+      const nextLimit = creditLimit.trim() === "" ? null : Number(creditLimit);
+      if (nextLimit != null && nextLimit >= 0 && nextLimit !== Number(saved.credit_limit ?? 0)) {
+        await setLimit.mutateAsync({
+          orgId: saved.id,
+          creditLimit: nextLimit,
+          reason: "Set from the party form",
+        });
+      }
       toast.success(party ? "Party updated" : "Party created");
       onSaved(saved);
     } catch (e) {
@@ -176,6 +189,18 @@ export function PartySheet({
                 className="h-8"
                 value={contactName}
                 onChange={(e) => setContactName(e.target.value)}
+              />
+            </Cell>
+            <Cell label="Credit limit ($)" span={6} htmlFor="party-credit">
+              <Input
+                id="party-credit"
+                type="number"
+                min={0}
+                step="1000"
+                className="h-8"
+                placeholder="0 = prepay"
+                value={creditLimit}
+                onChange={(e) => setCreditLimit(e.target.value)}
               />
             </Cell>
             <Cell label="Payment terms (days)" span={6} htmlFor="party-terms">

@@ -62,6 +62,19 @@ container drawer.
 | `pnpm supabase:migrate:new <slug>` | new migration file |
 | `pnpm admin:seed [email] [password]` | create / reset a confirmed user via the Admin API |
 
+## Customer credit
+
+Per buyer: **credit limit** (max they may owe), **exposure** (Σ balances of open shipments, counted
+from the Purchase until paid), **available** = limit − exposure, and aging buckets (current / 1–30
+/ 31–60 / 61–90 / >90 days past due). The amount owed on a shipment is the issued Commercial
+Invoice total when one exists, else the Purchase estimate (contract lbs × sell price, labelled
+"estimate"). Due date = invoice payment-due date, else ETD + payment terms, else purchase date +
+terms. Payments are recorded per shipment (Payments card, or from `/credit/[buyer]`); limit changes
+are audited. The model follows TPE's pre-rebuild `payments` / `credit_limit_changes` migrations;
+`shipment_receivables` and `buyer_credit` are SQL views, and `organizations.credit_available` is a
+trigger-maintained mirror kept for TPE. The Purchase card shows a soft over-limit warning and
+never blocks a save.
+
 ## Layout
 
 ```

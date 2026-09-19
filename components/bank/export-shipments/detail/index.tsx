@@ -22,6 +22,7 @@ import { Booking } from "@/components/bank/export-shipments/detail/booking";
 import { Purchase } from "@/components/bank/export-shipments/detail/purchase";
 import { Costs } from "@/components/bank/export-shipments/detail/costs";
 import { Documents } from "@/components/bank/export-shipments/detail/documents";
+import { Payments } from "@/components/bank/export-shipments/detail/payments";
 import { ShipmentFiles } from "@/components/bank/shipment-files";
 import { Manifest } from "@/components/bank/export-shipments/detail/manifest";
 import { Timeline } from "@/components/bank/export-shipments/detail/timeline";
@@ -36,6 +37,7 @@ const lbs = (n: number) => Math.round(n).toLocaleString("en-US");
 
 export function ShipmentDetail({ id }: { id: string }) {
   const query = ClientAPI.exportShipments.detail.useQuery({ id });
+  const utils = ClientAPI.useUtils();
   const group = query.data;
 
   if (query.isLoading) {
@@ -56,7 +58,13 @@ export function ShipmentDetail({ id }: { id: string }) {
     );
   }
 
-  const refresh = () => void query.refetch();
+  // Every card saves through this: the manifest and the credit views (what is
+  // owed, available credit) both move when the purchase, containers, documents
+  // or payments change.
+  const refresh = () => {
+    void query.refetch();
+    void utils.credit.invalidate();
+  };
 
   const totalLbs = group.containers.reduce(
     (sum, c) => sum + Number(c.matched_orders?.quantity_lbs ?? 0),
@@ -117,6 +125,7 @@ export function ShipmentDetail({ id }: { id: string }) {
       <Costs group={group} onSaved={refresh} />
 
       <Documents group={group} onSaved={refresh} />
+      <Payments group={group} onSaved={refresh} />
 
       <ShipmentFiles owner={{ kind: "group", groupId: group.id }} />
 

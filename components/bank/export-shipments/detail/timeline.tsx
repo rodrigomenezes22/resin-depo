@@ -43,6 +43,9 @@ function labelOf(event: ShipmentEventRow): string {
   if (event.event_type === "container_updated" && payload.scope === "deal") {
     return payload.created ? "Purchase opened" : "Purchase updated";
   }
+  if (event.event_type === "container_updated" && payload.scope === "payment") {
+    return payload.removed ? "Payment removed" : "Payment recorded";
+  }
   return EVENT_LABELS[event.event_type] ?? event.event_type;
 }
 
@@ -57,6 +60,10 @@ function describe(event: ShipmentEventRow): string | null {
   }
   if (typeof payload.containers === "number") {
     return `${payload.containers} container${payload.containers === 1 ? "" : "s"}`;
+  }
+  if (payload.scope === "payment" && typeof payload.amount === "number") {
+    const amt = payload.amount.toLocaleString("en-US", { style: "currency", currency: "USD" });
+    return [amt, payload.method, payload.referenceNumber].filter(Boolean).join(" · ");
   }
   // container_updated / cost_updated carry { changed: { column: { from, to } } }.
   if (payload.changed && typeof payload.changed === "object") {

@@ -1,10 +1,12 @@
 import { createTRPCRouter, protectedProcedure } from "../init";
+import { creditRouter } from "./credit";
 import { exportShipmentsRouter } from "./export-shipments";
 import { locationsRouter } from "./locations";
 import { referenceRouter } from "./reference";
 import { shipmentFilesRouter } from "./shipment-files";
 
 export const appRouter = createTRPCRouter({
+  credit: creditRouter,
   exportShipments: exportShipmentsRouter,
   locations: locationsRouter,
   reference: referenceRouter,

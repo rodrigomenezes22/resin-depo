@@ -15,6 +15,7 @@ import { Building2, Plus, Users } from "lucide-react";
 import { Section } from "@/components/bank/chrome";
 import { PARTY_ROLE_OPTIONS, PartySheet, type PartyRole } from "@/components/settings/party-sheet";
 import { Button } from "@/components/ui/button";
+import { Available, usd0 } from "@/components/credit/format";
 import { DataGrid, type DataGridColumn } from "@/components/ui/data-grid";
 import { ClientAPI } from "@/trpc/client";
 import type { inferRouterOutputs } from "@trpc/server";
@@ -35,6 +36,7 @@ function PartyGrid({
   defaultRole,
   emptyMessage,
   showRole,
+  showCredit = false,
 }: {
   roles: PartyRole[];
   title: string;
@@ -44,6 +46,7 @@ function PartyGrid({
   defaultRole: PartyRole;
   emptyMessage: string;
   showRole: boolean;
+  showCredit?: boolean;
 }) {
   const list = ClientAPI.reference.parties.list.useQuery({ roles, includeDeactivated: true });
   const utils = ClientAPI.useUtils();
@@ -95,6 +98,34 @@ function PartyGrid({
       align: "right",
       accessor: (r) => `Net ${r.payment_terms_days}`,
     },
+    ...(showCredit
+      ? ([
+          {
+            key: "credit_limit",
+            header: "Credit limit",
+            align: "right",
+            sortable: true,
+            accessor: (r: ListRow) => r.credit_limit,
+            cell: (r: ListRow) => usd0(r.credit_limit),
+          },
+          {
+            key: "exposure",
+            header: "Exposure",
+            align: "right",
+            sortable: true,
+            accessor: (r: ListRow) => r.exposure,
+            cell: (r: ListRow) => (r.exposure ? usd0(r.exposure) : "—"),
+          },
+          {
+            key: "available",
+            header: "Available",
+            align: "right",
+            sortable: true,
+            accessor: (r: ListRow) => r.available,
+            cell: (r: ListRow) => <Available value={r.available} limit={r.credit_limit} />,
+          },
+        ] satisfies DataGridColumn<ListRow>[])
+      : []),
     {
       key: "deal_count",
       header: "Purchases",
@@ -161,6 +192,7 @@ export function Buyers() {
       defaultRole="buyer"
       emptyMessage="No buyers yet. Add the first consignee."
       showRole={false}
+      showCredit
     />
   );
 }

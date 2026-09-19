@@ -101,6 +101,16 @@ export function Purchase({ group, onSaved }: { group: ShipmentGroupRow; onSaved:
   const sell = Number(sellPrice) || 0;
   const buy = Number(buyPrice) || 0;
 
+  // Soft credit check (TPE intent: warn, never block). The value of THIS
+  // purchase is compared against the buyer's available credit with this
+  // shipment's own open balance excluded — it is being replaced, not added.
+  const purchaseValue = contractLbs * sell;
+  const creditCheck = ClientAPI.credit.check.useQuery(
+    { orgId: buyerId, addValue: purchaseValue, excludeGroupId: group.id },
+    { enabled: buyerId !== NONE },
+  );
+  const cc = creditCheck.data ?? null;
+
   async function save() {
     if (buyerId === NONE) return void toast.error("Choose the buyer.");
     if (productId === NONE) return void toast.error("Choose the product.");
@@ -378,6 +388,28 @@ export function Purchase({ group, onSaved }: { group: ShipmentGroupRow; onSaved:
             ) : null}
           </ReadValue>
         </Cell>
+
+        {cc ? (
+          <Cell label="Credit" span={12}>
+            <p
+              className={
+                cc.over
+                  ? "text-table-negative text-sm font-medium"
+                  : cc.nearLimit
+                    ? "text-tpe-gold-ink text-sm font-medium"
+                    : "text-muted-foreground text-sm"
+              }
+            >
+              {cc.creditLimit > 0
+                ? `${money(cc.available, group.currency)} available of ${money(cc.creditLimit, group.currency)} limit`
+                : "No credit limit set (prepay)"}
+              {purchaseValue > 0
+                ? ` — this purchase ${money(purchaseValue, group.currency)} → ${money(cc.afterThis, group.currency)} left`
+                : ""}
+              {cc.over ? " · OVER LIMIT (saving is allowed; check with the desk)" : ""}
+            </p>
+          </Cell>
+        ) : null}
 
         <Cell label="Insurance terms" span={4} htmlFor="p-ins">
           <Input

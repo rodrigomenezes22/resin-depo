@@ -7,11 +7,6 @@ export type Json =
   | Json[]
 
 export type Database = {
-  // Allows to automatically instantiate createClient with right options
-  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
-  __InternalSupabase: {
-    PostgrestVersion: "14.5"
-  }
   public: {
     Tables: {
       bank_accounts: {
@@ -61,6 +56,13 @@ export type Database = {
           swift_code?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "bank_accounts_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "buyer_credit"
+            referencedColumns: ["organization_id"]
+          },
           {
             foreignKeyName: "bank_accounts_org_id_fkey"
             columns: ["org_id"]
@@ -150,6 +152,13 @@ export type Database = {
           zip?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "locations_operated_by_org_id_fkey"
+            columns: ["operated_by_org_id"]
+            isOneToOne: false
+            referencedRelation: "buyer_credit"
+            referencedColumns: ["organization_id"]
+          },
           {
             foreignKeyName: "locations_operated_by_org_id_fkey"
             columns: ["operated_by_org_id"]
@@ -296,6 +305,13 @@ export type Database = {
             foreignKeyName: "matched_orders_buyer_company_id_fkey"
             columns: ["buyer_company_id"]
             isOneToOne: false
+            referencedRelation: "buyer_credit"
+            referencedColumns: ["organization_id"]
+          },
+          {
+            foreignKeyName: "matched_orders_buyer_company_id_fkey"
+            columns: ["buyer_company_id"]
+            isOneToOne: false
             referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
@@ -307,6 +323,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "matched_orders_parent_matched_order_id_fkey"
+            columns: ["parent_matched_order_id"]
+            isOneToOne: false
+            referencedRelation: "shipment_receivables"
+            referencedColumns: ["purchase_id"]
+          },
+          {
             foreignKeyName: "matched_orders_product_id_fkey"
             columns: ["product_id"]
             isOneToOne: false
@@ -316,6 +339,65 @@ export type Database = {
           {
             foreignKeyName: "matched_orders_seller_company_id_fkey"
             columns: ["seller_company_id"]
+            isOneToOne: false
+            referencedRelation: "buyer_credit"
+            referencedColumns: ["organization_id"]
+          },
+          {
+            foreignKeyName: "matched_orders_seller_company_id_fkey"
+            columns: ["seller_company_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      organization_credit_limit_changes: {
+        Row: {
+          changed_at: string
+          changed_by_user_id: string | null
+          id: string
+          new_limit: number
+          old_limit: number
+          organization_id: string
+          reason: string | null
+        }
+        Insert: {
+          changed_at?: string
+          changed_by_user_id?: string | null
+          id?: string
+          new_limit: number
+          old_limit: number
+          organization_id: string
+          reason?: string | null
+        }
+        Update: {
+          changed_at?: string
+          changed_by_user_id?: string | null
+          id?: string
+          new_limit?: number
+          old_limit?: number
+          organization_id?: string
+          reason?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "organization_credit_limit_changes_changed_by_user_id_fkey"
+            columns: ["changed_by_user_id"]
+            isOneToOne: false
+            referencedRelation: "user_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "organization_credit_limit_changes_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "buyer_credit"
+            referencedColumns: ["organization_id"]
+          },
+          {
+            foreignKeyName: "organization_credit_limit_changes_organization_id_fkey"
+            columns: ["organization_id"]
             isOneToOne: false
             referencedRelation: "organizations"
             referencedColumns: ["id"]
@@ -360,6 +442,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "locations"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "organization_locations_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "buyer_credit"
+            referencedColumns: ["organization_id"]
           },
           {
             foreignKeyName: "organization_locations_organization_id_fkey"
@@ -427,6 +516,104 @@ export type Database = {
           tax_id?: string | null
         }
         Relationships: []
+      }
+      payments: {
+        Row: {
+          amount: number
+          buyer_org_id: string
+          created_at: string
+          currency: string
+          id: string
+          kind: string
+          method: string | null
+          notes: string | null
+          paid_at: string
+          recorded_by: string | null
+          reference_id: string
+          reference_number: string | null
+          shipment_group_id: string
+        }
+        Insert: {
+          amount: number
+          buyer_org_id: string
+          created_at?: string
+          currency?: string
+          id?: string
+          kind?: string
+          method?: string | null
+          notes?: string | null
+          paid_at?: string
+          recorded_by?: string | null
+          reference_id: string
+          reference_number?: string | null
+          shipment_group_id: string
+        }
+        Update: {
+          amount?: number
+          buyer_org_id?: string
+          created_at?: string
+          currency?: string
+          id?: string
+          kind?: string
+          method?: string | null
+          notes?: string | null
+          paid_at?: string
+          recorded_by?: string | null
+          reference_id?: string
+          reference_number?: string | null
+          shipment_group_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payments_buyer_org_id_fkey"
+            columns: ["buyer_org_id"]
+            isOneToOne: false
+            referencedRelation: "buyer_credit"
+            referencedColumns: ["organization_id"]
+          },
+          {
+            foreignKeyName: "payments_buyer_org_id_fkey"
+            columns: ["buyer_org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payments_recorded_by_fkey"
+            columns: ["recorded_by"]
+            isOneToOne: false
+            referencedRelation: "user_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payments_reference_id_fkey"
+            columns: ["reference_id"]
+            isOneToOne: false
+            referencedRelation: "matched_orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payments_reference_id_fkey"
+            columns: ["reference_id"]
+            isOneToOne: false
+            referencedRelation: "shipment_receivables"
+            referencedColumns: ["purchase_id"]
+          },
+          {
+            foreignKeyName: "payments_shipment_group_id_fkey"
+            columns: ["shipment_group_id"]
+            isOneToOne: false
+            referencedRelation: "shipment_groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payments_shipment_group_id_fkey"
+            columns: ["shipment_group_id"]
+            isOneToOne: false
+            referencedRelation: "shipment_receivables"
+            referencedColumns: ["shipment_group_id"]
+          },
+        ]
       }
       products: {
         Row: {
@@ -567,8 +754,29 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "shipment_containers_matched_order_id_fkey"
+            columns: ["matched_order_id"]
+            isOneToOne: true
+            referencedRelation: "shipment_receivables"
+            referencedColumns: ["purchase_id"]
+          },
+          {
             foreignKeyName: "shipment_containers_rolled_from_group_id_fkey"
             columns: ["rolled_from_group_id"]
+            isOneToOne: false
+            referencedRelation: "shipment_groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shipment_containers_rolled_from_group_id_fkey"
+            columns: ["rolled_from_group_id"]
+            isOneToOne: false
+            referencedRelation: "shipment_receivables"
+            referencedColumns: ["shipment_group_id"]
+          },
+          {
+            foreignKeyName: "shipment_containers_shipment_group_id_fkey"
+            columns: ["shipment_group_id"]
             isOneToOne: false
             referencedRelation: "shipment_groups"
             referencedColumns: ["id"]
@@ -577,8 +785,8 @@ export type Database = {
             foreignKeyName: "shipment_containers_shipment_group_id_fkey"
             columns: ["shipment_group_id"]
             isOneToOne: false
-            referencedRelation: "shipment_groups"
-            referencedColumns: ["id"]
+            referencedRelation: "shipment_receivables"
+            referencedColumns: ["shipment_group_id"]
           },
         ]
       }
@@ -609,6 +817,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "shipment_documents"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shipment_document_containers_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "shipment_receivables"
+            referencedColumns: ["invoice_id"]
           },
         ]
       }
@@ -683,11 +898,25 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "shipment_documents_shipment_group_id_fkey"
+            columns: ["shipment_group_id"]
+            isOneToOne: false
+            referencedRelation: "shipment_receivables"
+            referencedColumns: ["shipment_group_id"]
+          },
+          {
             foreignKeyName: "shipment_documents_supersedes_id_fkey"
             columns: ["supersedes_id"]
             isOneToOne: false
             referencedRelation: "shipment_documents"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shipment_documents_supersedes_id_fkey"
+            columns: ["supersedes_id"]
+            isOneToOne: false
+            referencedRelation: "shipment_receivables"
+            referencedColumns: ["invoice_id"]
           },
         ]
       }
@@ -756,11 +985,25 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "shipment_files_matched_order_id_fkey"
+            columns: ["matched_order_id"]
+            isOneToOne: false
+            referencedRelation: "shipment_receivables"
+            referencedColumns: ["purchase_id"]
+          },
+          {
             foreignKeyName: "shipment_files_shipment_group_id_fkey"
             columns: ["shipment_group_id"]
             isOneToOne: false
             referencedRelation: "shipment_groups"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shipment_files_shipment_group_id_fkey"
+            columns: ["shipment_group_id"]
+            isOneToOne: false
+            referencedRelation: "shipment_receivables"
+            referencedColumns: ["shipment_group_id"]
           },
           {
             foreignKeyName: "shipment_files_updated_by_fkey"
@@ -830,6 +1073,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "shipment_group_costs_shipment_group_id_fkey"
+            columns: ["shipment_group_id"]
+            isOneToOne: false
+            referencedRelation: "shipment_receivables"
+            referencedColumns: ["shipment_group_id"]
+          },
+          {
             foreignKeyName: "shipment_group_costs_updated_by_fkey"
             columns: ["updated_by"]
             isOneToOne: false
@@ -863,11 +1113,25 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "shipment_group_deals_matched_order_id_fkey"
+            columns: ["matched_order_id"]
+            isOneToOne: true
+            referencedRelation: "shipment_receivables"
+            referencedColumns: ["purchase_id"]
+          },
+          {
             foreignKeyName: "shipment_group_deals_shipment_group_id_fkey"
             columns: ["shipment_group_id"]
             isOneToOne: true
             referencedRelation: "shipment_groups"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shipment_group_deals_shipment_group_id_fkey"
+            columns: ["shipment_group_id"]
+            isOneToOne: true
+            referencedRelation: "shipment_receivables"
+            referencedColumns: ["shipment_group_id"]
           },
         ]
       }
@@ -910,6 +1174,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "shipment_groups"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shipment_group_events_shipment_group_id_fkey"
+            columns: ["shipment_group_id"]
+            isOneToOne: false
+            referencedRelation: "shipment_receivables"
+            referencedColumns: ["shipment_group_id"]
           },
         ]
       }
@@ -1012,6 +1283,13 @@ export type Database = {
             foreignKeyName: "shipment_groups_carrier_org_id_fkey"
             columns: ["carrier_org_id"]
             isOneToOne: false
+            referencedRelation: "buyer_credit"
+            referencedColumns: ["organization_id"]
+          },
+          {
+            foreignKeyName: "shipment_groups_carrier_org_id_fkey"
+            columns: ["carrier_org_id"]
+            isOneToOne: false
             referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
@@ -1042,6 +1320,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "shipment_groups"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shipment_groups_rolled_from_group_id_fkey"
+            columns: ["rolled_from_group_id"]
+            isOneToOne: false
+            referencedRelation: "shipment_receivables"
+            referencedColumns: ["shipment_group_id"]
           },
         ]
       }
@@ -1081,6 +1366,13 @@ export type Database = {
             foreignKeyName: "user_profiles_organization_id_fkey"
             columns: ["organization_id"]
             isOneToOne: false
+            referencedRelation: "buyer_credit"
+            referencedColumns: ["organization_id"]
+          },
+          {
+            foreignKeyName: "user_profiles_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
             referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
@@ -1088,7 +1380,74 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      buyer_credit: {
+        Row: {
+          available: number | null
+          bucket_1_30: number | null
+          bucket_31_60: number | null
+          bucket_61_90: number | null
+          bucket_90_plus: number | null
+          bucket_current: number | null
+          credit_limit: number | null
+          exposure: number | null
+          lifetime_billed: number | null
+          lifetime_paid: number | null
+          max_days_late: number | null
+          name: string | null
+          oldest_due: string | null
+          open_shipments: number | null
+          organization_id: string | null
+          payment_terms_days: number | null
+          role: string | null
+        }
+        Relationships: []
+      }
+      shipment_receivables: {
+        Row: {
+          amount: number | null
+          amount_source: string | null
+          balance: number | null
+          buyer_name: string | null
+          buyer_org_id: string | null
+          container_count: number | null
+          contract_lbs: number | null
+          currency: string | null
+          days_late: number | null
+          display_number: number | null
+          due_date: string | null
+          etd: string | null
+          invoice_due: string | null
+          invoice_id: string | null
+          invoice_issued_at: string | null
+          invoice_number: string | null
+          is_open: boolean | null
+          last_paid_at: string | null
+          order_number: number | null
+          paid: number | null
+          payment_count: number | null
+          purchase_created_at: string | null
+          purchase_id: string | null
+          shipment_group_id: string | null
+          status: Database["public"]["Enums"]["shipment_group_status"] | null
+          terms_days: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "matched_orders_buyer_company_id_fkey"
+            columns: ["buyer_org_id"]
+            isOneToOne: false
+            referencedRelation: "buyer_credit"
+            referencedColumns: ["organization_id"]
+          },
+          {
+            foreignKeyName: "matched_orders_buyer_company_id_fkey"
+            columns: ["buyer_org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Functions: {
       allocate_shipment_costs: {
@@ -1096,6 +1455,10 @@ export type Database = {
         Returns: undefined
       }
       get_platform_role: { Args: never; Returns: string }
+      refresh_credit_available: {
+        Args: { p_org_id: string }
+        Returns: undefined
+      }
       shipment_document_editable_keys: {
         Args: { p_doc_type: Database["public"]["Enums"]["shipment_doc_type"] }
         Returns: string[]
@@ -1159,12 +1522,12 @@ export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends (DefaultSchemaTableNameOrOptions extends {
+  TableName extends DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never) = never,
+    : never = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -1188,11 +1551,11 @@ export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends (DefaultSchemaTableNameOrOptions extends {
+  TableName extends DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never) = never,
+    : never = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -1213,11 +1576,11 @@ export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends (DefaultSchemaTableNameOrOptions extends {
+  TableName extends DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never) = never,
+    : never = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -1238,11 +1601,11 @@ export type Enums<
   DefaultSchemaEnumNameOrOptions extends
     | keyof DefaultSchema["Enums"]
     | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends (DefaultSchemaEnumNameOrOptions extends {
+  EnumName extends DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never) = never,
+    : never = never,
 > = DefaultSchemaEnumNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -1255,11 +1618,11 @@ export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
     | keyof DefaultSchema["CompositeTypes"]
     | { schema: keyof DatabaseWithoutInternals },
-  CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
+  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never) = never,
+    : never = never,
 > = PublicCompositeTypeNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -1320,3 +1683,4 @@ export const Constants = {
     },
   },
 } as const
+
