@@ -29,10 +29,7 @@ INSERT INTO public.organization_locations (organization_id, location_id, role, i
   ('b0000000-0000-4000-8000-00000000000b', 'd0000000-0000-4000-8000-000000000102', 'headquarters', true),
   ('b0000000-0000-4000-8000-00000000000b', 'd0000000-0000-4000-8000-000000000102', 'billing',      true);
 
--- Ports ---------------------------------------------------------------------
-INSERT INTO public.locations (id, name, kind, city, state, country, unlocode) VALUES
-  ('d0000000-0000-4000-8000-000000000003', 'Port of Houston',  'port', 'Houston',  'TX', 'United States', 'USHOU'),
-  ('d0000000-0000-4000-8000-000000000004', 'Port of Shanghai', 'port', 'Shanghai', NULL, 'China',         'CNSHA');
+-- Ports: 216 ports come from migration 20260918000200_ports_catalogue.sql.
 
 -- Products: the nine TPE grades come from migration 20260918000100_products_catalogue.sql.
 
