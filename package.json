@@ -8,7 +8,16 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "admin:seed": "node scripts/create-admin.mjs",
+    "supabase:start": "supabase start",
+    "supabase:stop": "supabase stop",
+    "supabase:reset": "supabase db reset",
+    "supabase:push": "supabase db push",
+    "supabase:push:dry": "supabase db push --dry-run",
+    "supabase:types": "supabase gen types typescript --linked --schema public > lib/supabase/database.types.ts",
+    "supabase:types:local": "supabase gen types typescript --local --schema public > lib/supabase/database.types.ts",
+    "supabase:migrate:new": "supabase migration new"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
@@ -32,6 +41,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "prettier": "^3.4.2",
+    "supabase": "2.111.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   },

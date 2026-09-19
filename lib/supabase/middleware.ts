@@ -1,6 +1,18 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
+/**
+ * Public paths that do not require authentication.
+ * Matching is `startsWith`, so a prefix here opens everything beneath it.
+ * Mirrors the TPE pattern (lib/supabase/middleware.ts) so guards port over 1:1.
+ */
+export const PUBLIC_PATHS = ["/", "/auth", "/api"];
+
+export function isPublicPath(pathname: string): boolean {
+  if (pathname === "/") return true;
+  return PUBLIC_PATHS.some((p) => p !== "/" && pathname.startsWith(p));
+}
+
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
     request,
@@ -38,17 +50,17 @@ export async function updateSession(request: NextRequest) {
   const { data } = await supabase.auth.getClaims();
   const user = data?.claims;
 
-  if (
-    !user &&
-    !request.nextUrl.pathname.startsWith("/login") &&
-    !request.nextUrl.pathname.startsWith("/auth") &&
-    // the OAuth consent route sends unauthenticated visitors to the login page
-    // itself, so that it can preserve the authorization in the `next` parameter
-    request.nextUrl.pathname !== "/oauth/consent"
-  ) {
-    // no user, potentially respond by redirecting the user to the login page
+  // Redirect unauthenticated users away from protected routes.
+  if (!user && !isPublicPath(request.nextUrl.pathname)) {
     const url = request.nextUrl.clone();
     url.pathname = "/auth/login";
+    return NextResponse.redirect(url);
+  }
+
+  // Redirect authenticated users away from auth pages to the dashboard.
+  if (user && request.nextUrl.pathname.startsWith("/auth")) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/dashboard";
     return NextResponse.redirect(url);
   }
 
