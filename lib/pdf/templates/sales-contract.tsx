@@ -13,6 +13,7 @@
 // =============================================================================
 
 import { Document, Page, Text, View } from "@react-pdf/renderer";
+import { Logo } from "@/lib/pdf/logo";
 
 import { CONDITIONS_OF_SALE, contractClauses } from "@/lib/export-shipment/documents/boilerplate";
 import { partyLines } from "@/lib/export-shipment/documents/parties";
@@ -60,6 +61,8 @@ export function SalesContractPdf({ fields, status, voidReason }: SalesContractPd
           </Text>
         ) : null}
         {status === "draft" ? <Text style={styles.draftBanner}>DRAFT — NOT ISSUED</Text> : null}
+
+        <Logo width={96} />
 
         {/* --- title + identity --------------------------------------------- */}
         <View style={s.titleRow}>

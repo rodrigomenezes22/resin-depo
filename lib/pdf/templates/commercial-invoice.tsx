@@ -12,6 +12,7 @@
 // =============================================================================
 
 import { Document, Page, Text, View } from "@react-pdf/renderer";
+import { Logo } from "@/lib/pdf/logo";
 
 import { CONTAINER_COLS, fmt, fmtMoney, styles } from "../styles";
 import { partyLines } from "@/lib/export-shipment/documents/parties";
@@ -94,6 +95,7 @@ export function CommercialInvoicePdf({ fields, status, voidReason }: CommercialI
         {/* --- letterhead + reference grid ---------------------------------- */}
         <View style={styles.letterhead}>
           <View>
+            <Logo />
             <Text style={styles.brand}>{fields.shipper.name}</Text>
             {partyLines(fields.shipper)
               .slice(1)

@@ -11,6 +11,7 @@
 // =============================================================================
 
 import { Document, Page, Text, View } from "@react-pdf/renderer";
+import { Logo } from "@/lib/pdf/logo";
 
 import { partyLines } from "@/lib/export-shipment/documents/parties";
 import { roundKg, roundMt } from "@/lib/export-shipment/documents/totals";
@@ -85,6 +86,9 @@ export function CertificateOfOriginPdf({
         ) : null}
         {status === "draft" ? <Text style={styles.draftBanner}>DRAFT — NOT ISSUED</Text> : null}
 
+        <View style={{ alignItems: "flex-start" }}>
+          <Logo width={90} />
+        </View>
         <Text style={styles.docTitle}>CERTIFICATE OF ORIGIN</Text>
 
         <View style={d.boxGrid}>

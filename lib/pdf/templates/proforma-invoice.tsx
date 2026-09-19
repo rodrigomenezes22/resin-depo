@@ -9,6 +9,7 @@
 // =============================================================================
 
 import { Document, Page, Text, View } from "@react-pdf/renderer";
+import { Logo } from "@/lib/pdf/logo";
 
 import { partyLines } from "@/lib/export-shipment/documents/parties";
 import { roundKg, roundMoney, roundMt } from "@/lib/export-shipment/documents/totals";
@@ -44,6 +45,7 @@ export function ProformaInvoicePdf({ fields, status, voidReason }: ProformaInvoi
         <View style={styles.letterhead}>
           {f.seller ? (
             <View>
+              <Logo />
               <Text style={styles.brand}>{f.seller.name}</Text>
               {partyLines(f.seller)
                 .slice(1)
@@ -55,6 +57,7 @@ export function ProformaInvoicePdf({ fields, status, voidReason }: ProformaInvoi
             </View>
           ) : (
             <View>
+              <Logo />
               <Text style={styles.brand}>The Plastics Exchange, LLC.</Text>
               <Text style={styles.brandLines}>16510 N. 92nd St. #1010</Text>
               <Text style={styles.brandLines}>Scottsdale, AZ 85260 USA</Text>
