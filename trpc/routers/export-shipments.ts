@@ -674,77 +674,71 @@ export const exportShipmentsRouter = createTRPCRouter({
           message: "Save the Purchase card before adding containers.",
         });
       }
-      const quantityLbs = input.quantityLbs ?? LBS_PER_UNIT[unit];
-
-      const { data: lastLeg } = await ctx.db
-        .from("matched_orders")
-        .select("leg_index")
-        .eq("parent_matched_order_id", parent.id)
-        .order("leg_index", { ascending: false, nullsFirst: false })
-        .limit(1)
-        .maybeSingle();
-      let legIndex = (lastLeg?.leg_index ?? 0) + 1;
-
-      const legRow = {
-        parent_matched_order_id: parent.id,
-        market: "international" as const,
-        status: "matched",
-        ship_status: "inventory" as const,
+      const created = await mintLegs(ctx.db, groupId, parent, {
         unit,
-        qty: 1,
-        quantity_lbs: quantityLbs,
-        broker_id: parent.broker_id,
-        buyer_company_id: parent.buyer_company_id,
-        buyer_company_text: parent.buyer_company_text,
-        product_id: parent.product_id,
-        product_text: parent.product_text,
-        quality: parent.quality,
-        buyer_terms: parent.buyer_terms,
-        buyer_po: parent.buyer_po,
-        shipping_terms: parent.shipping_terms,
-        tpe_buy_price: parent.tpe_buy_price,
-        tpe_sell_price: parent.tpe_sell_price,
-        tolerance_pct: parent.tolerance_pct,
-        insurance_terms: parent.insurance_terms,
-        shipment_window: parent.shipment_window,
-        seller_company_id: parent.seller_company_id,
-        seller_company_text: parent.seller_company_text,
-      };
-
-      const created: string[] = [];
-      for (let i = 0; i < count; i++) {
-        const { data: leg, error } = await ctx.db
-          .from("matched_orders")
-          .insert({ ...legRow, leg_index: legIndex })
-          .select("id")
-          .single();
-        if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
-        try {
-          await assignToGroup(ctx.db, groupId, [leg.id]);
-        } catch (err) {
-          await ctx.db.from("matched_orders").delete().eq("id", leg.id);
-          throw err;
-        }
-        if (packageKind || packageCount || packageWeightLbs || marksAndNumbers) {
-          await ctx.db
-            .from("shipment_containers")
-            .update({
-              package_kind: packageKind ?? null,
-              package_count: packageKind ? (packageCount ?? null) : null,
-              package_weight_lbs: packageKind ? (packageWeightLbs ?? null) : null,
-              marks_and_numbers: marksAndNumbers ?? null,
-            })
-            .eq("matched_order_id", leg.id);
-        }
-        created.push(leg.id);
-        legIndex += 1;
-      }
-
-      await syncPurchaseTotals(ctx.db, parent.id);
+        quantityLbs: input.quantityLbs ?? LBS_PER_UNIT[unit],
+        packageKind: packageKind ?? null,
+        packageCount: packageCount ?? null,
+        packageWeightLbs: packageWeightLbs ?? null,
+        marksAndNumbers: marksAndNumbers ?? null,
+        count,
+      });
       await logEvent(ctx.db, groupId, "containers_assigned", ctx.claims.sub, {
         count,
         matchedOrderIds: created,
         from: "purchase",
+      });
+      return { matchedOrderIds: created };
+    }),
+
+  /**
+   * Duplicate a container: a new leg with the same unit, contract weight and
+   * packaging. Container number, seal and loaded weights are NOT copied — they
+   * belong to the physical box, and the new one has not been stuffed yet.
+   */
+  duplicateContainer: requirePermission("admin:view")
+    .input(
+      z.object({
+        containerId: z.string().uuid(),
+        count: z.number().int().min(1).max(20).default(1),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { data: src } = await ctx.db
+        .from("shipment_containers")
+        .select(
+          "id, shipment_group_id, package_kind, package_count, package_weight_lbs, marks_and_numbers, matched_orders(unit, quantity_lbs, parent_matched_order_id)",
+        )
+        .eq("id", input.containerId)
+        .maybeSingle();
+      if (!src?.shipment_group_id || !src.matched_orders) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Container is not on a shipment." });
+      }
+      const parent = await purchaseOf(ctx.db, src.shipment_group_id);
+      if (!parent || parent.id !== src.matched_orders.parent_matched_order_id) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "Only containers of this shipment's purchase can be duplicated.",
+        });
+      }
+      const unit = src.matched_orders.unit;
+      if (!(CONTAINER_UNITS as readonly string[]).includes(unit)) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Not a container unit." });
+      }
+      const created = await mintLegs(ctx.db, src.shipment_group_id, parent, {
+        unit: unit as (typeof CONTAINER_UNITS)[number],
+        quantityLbs: Number(src.matched_orders.quantity_lbs),
+        packageKind: src.package_kind,
+        packageCount: src.package_count,
+        packageWeightLbs: src.package_weight_lbs == null ? null : Number(src.package_weight_lbs),
+        marksAndNumbers: src.marks_and_numbers,
+        count: input.count,
+      });
+      await logEvent(ctx.db, src.shipment_group_id, "containers_assigned", ctx.claims.sub, {
+        count: input.count,
+        matchedOrderIds: created,
+        from: "duplicate",
+        sourceContainerId: src.id,
       });
       return { matchedOrderIds: created };
     }),
@@ -1452,6 +1446,96 @@ async function purchaseOf(db: ExportShipmentDb, groupId: string) {
     .eq("id", data.matched_order_id)
     .maybeSingle();
   return parent ?? null;
+}
+
+type PurchaseRow = NonNullable<Awaited<ReturnType<typeof purchaseOf>>>;
+
+/**
+ * Mint `count` identical legs of the purchase and put them on the manifest:
+ * each copies the parent's commercial columns (TPE convert_matched_order
+ * semantics), gets the next leg_index, and its shipment_containers row is
+ * patched with the packaging the desk already knows. A leg the guard trigger
+ * refuses is deleted again. Parent totals are re-synced at the end.
+ */
+async function mintLegs(
+  db: ExportShipmentDb,
+  groupId: string,
+  parent: PurchaseRow,
+  spec: {
+    unit: (typeof CONTAINER_UNITS)[number];
+    quantityLbs: number;
+    packageKind: string | null;
+    packageCount: number | null;
+    packageWeightLbs: number | null;
+    marksAndNumbers: string | null;
+    count: number;
+  },
+): Promise<string[]> {
+  const { data: lastLeg } = await db
+    .from("matched_orders")
+    .select("leg_index")
+    .eq("parent_matched_order_id", parent.id)
+    .order("leg_index", { ascending: false, nullsFirst: false })
+    .limit(1)
+    .maybeSingle();
+  let legIndex = (lastLeg?.leg_index ?? 0) + 1;
+
+  const legRow = {
+    parent_matched_order_id: parent.id,
+    market: "international" as const,
+    status: "matched",
+    ship_status: "inventory" as const,
+    unit: spec.unit,
+    qty: 1,
+    quantity_lbs: spec.quantityLbs,
+    broker_id: parent.broker_id,
+    buyer_company_id: parent.buyer_company_id,
+    buyer_company_text: parent.buyer_company_text,
+    product_id: parent.product_id,
+    product_text: parent.product_text,
+    quality: parent.quality,
+    buyer_terms: parent.buyer_terms,
+    buyer_po: parent.buyer_po,
+    shipping_terms: parent.shipping_terms,
+    tpe_buy_price: parent.tpe_buy_price,
+    tpe_sell_price: parent.tpe_sell_price,
+    tolerance_pct: parent.tolerance_pct,
+    insurance_terms: parent.insurance_terms,
+    shipment_window: parent.shipment_window,
+    seller_company_id: parent.seller_company_id,
+    seller_company_text: parent.seller_company_text,
+  };
+
+  const created: string[] = [];
+  for (let i = 0; i < spec.count; i++) {
+    const { data: leg, error } = await db
+      .from("matched_orders")
+      .insert({ ...legRow, leg_index: legIndex })
+      .select("id")
+      .single();
+    if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
+    try {
+      await assignToGroup(db, groupId, [leg.id]);
+    } catch (err) {
+      await db.from("matched_orders").delete().eq("id", leg.id);
+      throw err;
+    }
+    if (spec.packageKind || spec.marksAndNumbers) {
+      await db
+        .from("shipment_containers")
+        .update({
+          package_kind: spec.packageKind,
+          package_count: spec.packageKind ? spec.packageCount : null,
+          package_weight_lbs: spec.packageKind ? spec.packageWeightLbs : null,
+          marks_and_numbers: spec.marksAndNumbers,
+        })
+        .eq("matched_order_id", leg.id);
+    }
+    created.push(leg.id);
+    legIndex += 1;
+  }
+  await syncPurchaseTotals(db, parent.id);
+  return created;
 }
 
 /**

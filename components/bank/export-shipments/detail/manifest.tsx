@@ -15,7 +15,7 @@
 // =============================================================================
 
 import { useState } from "react";
-import { Container, ListPlus, Pencil, Plus, Trash2, X } from "lucide-react";
+import { Container, Copy, ListPlus, Pencil, Plus, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Section } from "@/components/bank/chrome";
@@ -50,6 +50,13 @@ export function Manifest({ group, onSaved }: { group: ShipmentGroupRow; onSaved:
   const [adding, setAdding] = useState(false);
 
   const remove = ClientAPI.exportShipments.removeContainer.useMutation({ onSuccess: onSaved });
+  const duplicate = ClientAPI.exportShipments.duplicateContainer.useMutation({
+    onSuccess: () => {
+      toast.success("Container duplicated");
+      onSaved();
+    },
+    onError: (e) => toast.error(e.message),
+  });
   const destroy = ClientAPI.exportShipments.deleteContainer.useMutation({
     onSuccess: onSaved,
     onError: (e) => toast.error(e.message),
@@ -147,9 +154,19 @@ export function Manifest({ group, onSaved }: { group: ShipmentGroupRow; onSaved:
     {
       key: "actions",
       header: "",
-      width: 104,
+      width: 124,
       cell: (c) => (
         <div className="flex items-center gap-1">
+          <button
+            type="button"
+            aria-label={`Duplicate container ${c.position}`}
+            title="Duplicate (same unit, contract weight & packaging; not stuffed)"
+            onClick={() => duplicate.mutate({ containerId: c.id })}
+            disabled={duplicate.isPending}
+            className="text-table-link hover:opacity-70 disabled:opacity-40"
+          >
+            <Copy className="size-3.5" />
+          </button>
           <button
             type="button"
             aria-label={`Edit container ${c.position}`}
