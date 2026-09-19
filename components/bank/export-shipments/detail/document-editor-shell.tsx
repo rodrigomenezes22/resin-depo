@@ -76,12 +76,14 @@ export function DocumentEditorShell({
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
 
-        <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden lg:grid-cols-2">
+        {/* Side by side from md up (the dialog is 96vw, so two ~450px columns fit
+            a 1000px window); stacked below that with the preview kept visible. */}
+        <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto md:grid-cols-2 md:overflow-hidden">
           {/* --- The form, supplied by the document type ------------------ */}
-          <div className="flex min-h-0 flex-col gap-5 overflow-y-auto pr-2">{children}</div>
+          <div className="flex min-h-0 flex-col gap-5 pr-2 md:overflow-y-auto">{children}</div>
 
           {/* --- The preview --------------------------------------------- */}
-          <div className="bg-muted/30 flex min-h-0 flex-col overflow-hidden rounded-lg border">
+          <div className="bg-muted/30 flex min-h-[60vh] flex-col overflow-hidden rounded-lg border md:min-h-0">
             <div className="flex items-center justify-between border-b px-3 py-2">
               <span className="text-muted-foreground text-xs">
                 {pending ? (
